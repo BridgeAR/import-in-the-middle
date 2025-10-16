@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.0.0](https://github.com/nodejs/import-in-the-middle/compare/import-in-the-middle-v1.15.0...import-in-the-middle-v2.0.0) (2025-10-14)
+
+
+### ⚠ BREAKING CHANGES
+
+Converting all modules running in the loader thread to ESM should not be a
+breaking change for most users since it primarily affects internal implementation
+details. However, if you were referencing internal CJS files like `hook.js` this will no longer work.
+
+### Features
+
+* convert all modules running in loader thread to ESM ([#210](https://github.com/nodejs/import-in-the-middle/issues/210)) ([da7c7a6](https://github.com/nodejs/import-in-the-middle/commit/da7c7a6904a40bf394b7b2a271a2838711c5417c))
+
 ## [1.15.0](https://github.com/nodejs/import-in-the-middle/compare/import-in-the-middle-v1.14.4...import-in-the-middle-v1.15.0) (2025-10-09)
 
 
