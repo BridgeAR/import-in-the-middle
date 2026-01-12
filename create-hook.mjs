@@ -364,7 +364,7 @@ export function createHook (meta) {
         entrypoint = result.url
         return { url: result.url, format: 'commonjs' }
       }
-      if (NODE_MAJOR >= 16) {
+      if (NODE_MAJOR > 16 || (NODE_MAJOR === 16 && NODE_MINOR >= 16)) {
         entrypoint = result.url
         return result
       }
