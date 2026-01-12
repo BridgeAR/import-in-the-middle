@@ -421,6 +421,7 @@ export function createHook (meta) {
   async function getSource (url, context, parentGetSource) {
     if (hasIitm(url)) {
       const realUrl = deleteIitm(url)
+      const originalSpecifier = specifiers.get(realUrl)
 
       try {
         const setters = await processModule({
@@ -429,6 +430,8 @@ export function createHook (meta) {
           parentGetSource,
           parentResolve: cachedResolve
         })
+        // If the module loaded successfully, we can remove the specifier to reduce memory usage early.
+        specifiers.delete(realUrl)
         return {
           source: `
 import { register } from '${iitmURL}'
@@ -442,10 +445,13 @@ const get = {}
 
 ${Array.from(setters.values()).join('\n')}
 
-register(${JSON.stringify(realUrl)}, _, set, get, ${JSON.stringify(specifiers.get(realUrl))})
+register(${JSON.stringify(realUrl)}, _, set, get, ${JSON.stringify(originalSpecifier)})
 `
         }
       } catch (cause) {
+        // If the module failed loading, the specifier will not be used again, so
+        // we can remove it to prevent a memory leak.
+        specifiers.delete(realUrl)
         // If there are other ESM loader hooks registered as well as iitm,
         // depending on the order they are registered, source might not be
         // JavaScript.
