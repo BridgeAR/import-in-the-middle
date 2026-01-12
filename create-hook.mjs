@@ -354,10 +354,20 @@ export function createHook (meta) {
     if (isWin && parentURL.indexOf('file:node') === 0) {
       context.parentURL = ''
     }
-    const result = await parentResolve(newSpecifier, context, parentResolve)
-    if (parentURL === '' && !EXTENSION_RE.test(result.url)) {
-      entrypoint = result.url
-      return { url: result.url, format: 'commonjs' }
+    const result = await parentResolve(newSpecifier, context)
+
+    // Do not wrap the entrypoint module. Many CLIs check whether they are the
+    // "main" module (e.g. require.main === module). Wrapping changes how they
+    // are evaluated, and can make them exit without doing anything.
+    if (parentURL === '') {
+      if (!EXTENSION_RE.test(result.url)) {
+        entrypoint = result.url
+        return { url: result.url, format: 'commonjs' }
+      }
+      if (NODE_MAJOR >= 16) {
+        entrypoint = result.url
+        return result
+      }
     }
 
     // For included/excluded modules, we check the specifier to match libraries
@@ -466,7 +476,7 @@ register(${JSON.stringify(realUrl)}, _, set, get, ${JSON.stringify(specifiers.ge
       }
     }
 
-    return parentGetSource(url, context, parentGetSource)
+    return parentGetSource(url, context)
   }
 
   // For Node.js 16.12.0 and higher.
@@ -480,7 +490,7 @@ register(${JSON.stringify(realUrl)}, _, set, get, ${JSON.stringify(specifiers.ge
       }
     }
 
-    return parentLoad(url, context, parentLoad)
+    return parentLoad(url, context)
   }
 
   if (NODE_MAJOR >= 17 || (NODE_MAJOR === 16 && NODE_MINOR >= 12)) {
@@ -503,7 +513,7 @@ register(${JSON.stringify(realUrl)}, _, set, get, ${JSON.stringify(specifiers.ge
           }
         }
 
-        return parentGetFormat(url, context, parentGetFormat)
+        return parentGetFormat(url, context)
       }
     }
   }
