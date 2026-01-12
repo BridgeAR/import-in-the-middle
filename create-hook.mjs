@@ -196,12 +196,13 @@ function emitWarning (err) {
  * @param {string} params.srcUrl The full URL to the module to process.
  * @param {object} params.context Provided by the loaders API.
  * @param {Function} params.parentGetSource Provides the source code for the parent module.
- * @param {bool} params.excludeDefault Exclude the default export.
+ * @param {Function} params.parentResolve Provides the resolve function for the parent module.
+ * @param {boolean} [params.excludeDefault = false] Exclude the default export.
  *
  * @returns {Promise<Map<string, string>>} The shimmed setters for all the exports
  * from the module and any transitive export all modules.
  */
-async function processModule ({ srcUrl, context, parentGetSource, parentResolve, excludeDefault }) {
+async function processModule ({ srcUrl, context, parentGetSource, parentResolve, excludeDefault = false }) {
   const exportNames = await getExports(srcUrl, context, parentGetSource)
   const starExports = new Set()
   const setters = new Map()
