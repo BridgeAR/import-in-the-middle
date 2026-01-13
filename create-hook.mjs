@@ -216,12 +216,13 @@ function emitWarning (err) {
  * @param {string} params.srcUrl The full URL to the module to process.
  * @param {object} params.context Provided by the loaders API.
  * @param {Function} params.parentGetSource Provides the source code for the parent module.
- * @param {bool} params.excludeDefault Exclude the default export.
+ * @param {Function} params.parentResolve Provides the resolve function for the parent module.
+ * @param {boolean} [params.excludeDefault = false] Exclude the default export.
  *
  * @returns {Promise<Map<string, string>>} The shimmed setters for all the exports
  * from the module and any transitive export all modules.
  */
-async function processModule ({ srcUrl, context, parentGetSource, parentResolve, excludeDefault }) {
+async function processModule ({ srcUrl, context, parentGetSource, parentResolve, excludeDefault = false }) {
   const exportNames = await getExports(srcUrl, context, parentGetSource)
   const starExports = new Set()
   const setters = new Map()
@@ -450,6 +451,7 @@ export function createHook (meta) {
   async function getSource (url, context, parentGetSource) {
     if (hasIitm(url)) {
       const realUrl = deleteIitm(url)
+      const originalSpecifier = specifiers.get(realUrl)
 
       try {
         const setters = await processModule({
@@ -458,6 +460,8 @@ export function createHook (meta) {
           parentGetSource,
           parentResolve: cachedResolve
         })
+        // If the module loaded successfully, we can remove the specifier to reduce memory usage early.
+        specifiers.delete(realUrl)
         return {
           source: `
 import { register } from '${iitmURL}'
@@ -471,10 +475,13 @@ const get = {}
 
 ${Array.from(setters.values()).join('\n')}
 
-register(${JSON.stringify(realUrl)}, _, set, get, ${JSON.stringify(specifiers.get(realUrl))})
+register(${JSON.stringify(realUrl)}, _, set, get, ${JSON.stringify(originalSpecifier)})
 `
         }
       } catch (cause) {
+        // If the module failed loading, the specifier will not be used again, so
+        // we can remove it to prevent a memory leak.
+        specifiers.delete(realUrl)
         // If there are other ESM loader hooks registered as well as iitm,
         // depending on the order they are registered, source might not be
         // JavaScript.
