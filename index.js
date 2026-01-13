@@ -29,7 +29,12 @@ function removeHook (hook) {
 function callHookFn (hookFn, namespace, name, baseDir) {
   const newDefault = hookFn(namespace, name, baseDir)
   if (newDefault && newDefault !== namespace) {
-    namespace.default = newDefault
+    // Only ESM modules that actually export `default` can have it reassigned.
+    // Some hooks return a value unconditionally; avoid crashing when the module
+    // has no default export (see issue #188).
+    if ('default' in namespace) {
+      namespace.default = newDefault
+    }
   }
 }
 
@@ -127,9 +132,12 @@ function Hook (modules, options, hookFn) {
       name = name.replace(/^node:/, '')
     } else {
       if (name.startsWith('file://')) {
+        const stackTraceLimit = Error.stackTraceLimit
+        Error.stackTraceLimit = 0
         try {
           name = fileURLToPath(name)
         } catch (e) {}
+        Error.stackTraceLimit = stackTraceLimit
       }
       const details = parse(name)
       if (details) {
