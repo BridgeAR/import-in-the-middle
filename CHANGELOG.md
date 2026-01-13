@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.0.3](https://github.com/nodejs/import-in-the-middle/compare/import-in-the-middle-v2.0.2...import-in-the-middle-v2.0.3) (2026-01-13)
+
+
+### Bug Fixes
+
+* add missing JSDoc type information ([40c1009](https://github.com/nodejs/import-in-the-middle/commit/40c1009ef3acc45b5eec89ed1b866866933edace))
+* add missing name for fast builtin lookup ([40c1009](https://github.com/nodejs/import-in-the-middle/commit/40c1009ef3acc45b5eec89ed1b866866933edace))
+* do not crash on missing setters ([#223](https://github.com/nodejs/import-in-the-middle/issues/223)) ([fe44778](https://github.com/nodejs/import-in-the-middle/commit/fe4477832aa9a3422ebecf0a2460cf77be3b3581))
+* handle undefined exports properly ([40c1009](https://github.com/nodejs/import-in-the-middle/commit/40c1009ef3acc45b5eec89ed1b866866933edace))
+* multiple minor issues ([#221](https://github.com/nodejs/import-in-the-middle/issues/221)) ([40c1009](https://github.com/nodejs/import-in-the-middle/commit/40c1009ef3acc45b5eec89ed1b866866933edace))
+* remove small memory leak ([40c1009](https://github.com/nodejs/import-in-the-middle/commit/40c1009ef3acc45b5eec89ed1b866866933edace))
+
+
+### Performance Improvements
+
+* improve perf by calculating less stack frames and fast paths ([#224](https://github.com/nodejs/import-in-the-middle/issues/224)) ([09ae8bf](https://github.com/nodejs/import-in-the-middle/commit/09ae8bfdeedf6c1c8c81c7338858004447e68233))
+
+## [2.0.2](https://github.com/nodejs/import-in-the-middle/compare/import-in-the-middle-v2.0.1...import-in-the-middle-v2.0.2) (2026-01-11)
+
+
+### Bug Fixes
+
+* grammar issue in README.md ([#216](https://github.com/nodejs/import-in-the-middle/issues/216)) ([46e4a2a](https://github.com/nodejs/import-in-the-middle/commit/46e4a2a9ad250c06fb52c9b782370071a6d1f3cc))
+* properly handle internals when specifier matches ([#220](https://github.com/nodejs/import-in-the-middle/issues/220)) ([05e4216](https://github.com/nodejs/import-in-the-middle/commit/05e4216e10d11c7eb996d4124f36e476f3a6d42f))
+
 ## [2.0.1](https://github.com/nodejs/import-in-the-middle/compare/import-in-the-middle-v2.0.0...import-in-the-middle-v2.0.1) (2025-12-18)
 
 
