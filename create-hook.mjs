@@ -531,7 +531,7 @@ if (__pending.length > 0) {
     __flushPendingOnce()
 
     if (__pending.length > 0) {
-      const __retryDelays = [0, 5, 25]
+      const __retryDelays = [0, 10, 50]
       const __schedulePending = (i) => {
         if (__pending.length === 0) return
         if (i >= __retryDelays.length) {
