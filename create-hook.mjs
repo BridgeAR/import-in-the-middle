@@ -24,7 +24,7 @@ const HANDLED_FORMATS = new Set(['builtin', 'module', 'commonjs'])
 const TRACE_WARNINGS = process.execArgv.includes('--trace-warnings')
 
 let getExports
-if (NODE_MAJOR >= 16) {
+if (NODE_MAJOR > 16 || (NODE_MAJOR === 16 && NODE_MINOR >= 16)) {
   getExports = getExportsImpl
 } else {
   getExports = (url) => import(url).then(Object.keys)
