@@ -46,7 +46,7 @@ async function main () {
 }
 
 main().catch((err) => {
-  // Ensure failures are treated as test failures on Node versions without top-level await.
+  // Ensure failures are treated as test failures.
   console.error(err)
   process.exitCode = 1
 })
