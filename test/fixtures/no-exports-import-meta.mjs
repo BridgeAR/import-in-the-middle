@@ -1,2 +1,3 @@
 // No exports, but uses `import.meta` (ESM-only syntax).
-void import.meta.url
+const x = import.meta.url
+console.log(x)
