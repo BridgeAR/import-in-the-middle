@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.0.6](https://github.com/nodejs/import-in-the-middle/compare/import-in-the-middle-v2.0.5...import-in-the-middle-v2.0.6) (2026-01-27)
+
+
+### Bug Fixes
+
+* ensure the callback 'name' arg is the module name when matching the module main file, even when 'internals: true' option is used ([#241](https://github.com/nodejs/import-in-the-middle/issues/241)) ([ad9d02c](https://github.com/nodejs/import-in-the-middle/commit/ad9d02cd774df110c5e2f72e6cca414d7c315404))
+* fix a couple issues with duplicate entries and specifier (submodule) matching ([#237](https://github.com/nodejs/import-in-the-middle/issues/237)) ([fdc0b3d](https://github.com/nodejs/import-in-the-middle/commit/fdc0b3d5863a1338586e25a94b831fee1bd8bd0b))
+* properly hook builtin modules that require the 'node:' prefix ([#240](https://github.com/nodejs/import-in-the-middle/issues/240)) ([de84589](https://github.com/nodejs/import-in-the-middle/commit/de8458962958182eac743e99edeb944160638e2c))
+* properly hook builtin modules that require the 'node:' prefix ([#240](https://github.com/nodejs/import-in-the-middle/issues/240)) ([9d916a5](https://github.com/nodejs/import-in-the-middle/commit/9d916a59b4a95b2a22568d1e8f65948598178de9))
+
+## [2.0.5](https://github.com/nodejs/import-in-the-middle/compare/import-in-the-middle-v2.0.4...import-in-the-middle-v2.0.5) (2026-01-20)
+
+
+### Bug Fixes
+
+* handle lazy initialization and circular dependencies ([#229](https://github.com/nodejs/import-in-the-middle/issues/229)) ([d1421dc](https://github.com/nodejs/import-in-the-middle/commit/d1421dc0ae65ce6da5de5cb58f41af99f9d87371))
+* entrypoint can be treated as CommonJS when loader chains add query params to file URLs ([#223](https://github.com/nodejs/import-in-the-middle/issues/223)) ([60ab14a](https://github.com/nodejs/import-in-the-middle/commit/60ab14aeed8960b5dec4bec571a81649363e256e))
+
 ## [2.0.4](https://github.com/nodejs/import-in-the-middle/compare/import-in-the-middle-v2.0.3...import-in-the-middle-v2.0.4) (2026-01-14)
 
 

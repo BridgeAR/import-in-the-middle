@@ -3,15 +3,19 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021 Datadog, Inc.
 
 const path = require('path')
-const parse = require('module-details-from-path')
+const moduleDetailsFromPath = require('module-details-from-path')
 const { fileURLToPath } = require('url')
 const { MessageChannel } = require('worker_threads')
+
+let { isBuiltin } = require('module')
+if (!isBuiltin) {
+  isBuiltin = () => true
+}
 
 const {
   importHooks,
   specifiers,
-  toHook,
-  getExperimentalPatchInternals
+  toHook
 } = require('./lib/register')
 
 function addHook (hook) {
@@ -124,43 +128,58 @@ function Hook (modules, options, hookFn) {
   }
 
   this._iitmHook = (name, namespace, specifier) => {
-    const filename = name
-    const isBuiltin = name.startsWith('node:')
-    let baseDir
+    const loadUrl = name
+    const isNodeUrl = loadUrl.startsWith('node:')
+    let filePath, baseDir
 
-    if (isBuiltin) {
-      name = name.replace(/^node:/, '')
-    } else {
-      if (name.startsWith('file://')) {
-        const stackTraceLimit = Error.stackTraceLimit
-        Error.stackTraceLimit = 0
-        try {
-          name = fileURLToPath(name)
-        } catch (e) {}
-        Error.stackTraceLimit = stackTraceLimit
+    if (isNodeUrl) {
+      // Normalize builtin module name to *not* have 'node:' prefix, unless
+      // required, as it is for 'node:test' and some others.  `module.isBuiltin`
+      // is available in all Node.js versions that have node:-only modules.
+      const unprefixed = name.slice(5)
+      if (isBuiltin(unprefixed)) {
+        name = unprefixed
       }
-      const details = parse(name)
-      if (details) {
-        name = details.name
-        baseDir = details.basedir
+    } else if (loadUrl.startsWith('file://')) {
+      const stackTraceLimit = Error.stackTraceLimit
+      Error.stackTraceLimit = 0
+      try {
+        filePath = fileURLToPath(name)
+        name = filePath
+      } catch (e) {}
+      Error.stackTraceLimit = stackTraceLimit
+
+      if (filePath) {
+        const details = moduleDetailsFromPath(filePath)
+        if (details) {
+          name = details.name
+          baseDir = details.basedir
+        }
       }
     }
 
     if (modules) {
-      for (const moduleName of modules) {
-        const nameMatch = moduleName === name
-        const specMatch = moduleName === specifier
-        if (nameMatch || specMatch) {
-          if (baseDir) {
-            if (internals) {
-              name = name + path.sep + path.relative(baseDir, fileURLToPath(filename))
-            } else {
-              if (!getExperimentalPatchInternals() && !specMatch && !baseDir.endsWith(specifiers.get(filename))) {
-                continue
-              }
-            }
+      for (const matchArg of modules) {
+        if (filePath && matchArg === filePath) {
+          // abspath match
+          callHookFn(hookFn, namespace, filePath, undefined)
+        } else if (matchArg === name) {
+          if (!baseDir) {
+            // built-in module (or unexpected non file:// name?)
+            callHookFn(hookFn, namespace, name, baseDir)
+          } else if (baseDir.endsWith(specifiers.get(loadUrl))) {
+            // An import of the top-level module (e.g. `import 'ioredis'`).
+            // Note: Slight behaviour difference from RITM. RITM uses
+            // `require.resolve(name)` to see if filename is the module
+            // main file, which will catch `require('ioredis/built/index.js')`.
+            // The check here will not catch `import 'ioredis/built/index.js'`.
+            callHookFn(hookFn, namespace, name, baseDir)
+          } else if (internals) {
+            const internalPath = name + path.sep + path.relative(baseDir, filePath)
+            callHookFn(hookFn, namespace, internalPath, baseDir)
           }
-          callHookFn(hookFn, namespace, name, baseDir)
+        } else if (matchArg === specifier) {
+          callHookFn(hookFn, namespace, specifier, baseDir)
         }
       }
     } else {
