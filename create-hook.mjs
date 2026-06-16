@@ -6,10 +6,10 @@ import { URL, fileURLToPath } from 'url'
 import { inspect } from 'util'
 import { builtinModules } from 'module'
 import {
-  getExports as getExportsImpl,
+  getExports,
   hasModuleExportsCJSDefault
 } from './lib/get-exports.mjs'
-import { RESOLVE, IMPORT, driveSync, driveAsync } from './lib/io.mjs'
+import { RESOLVE, driveSync, driveAsync } from './lib/io.mjs'
 
 const specifiers = new Map()
 const isWin = process.platform === 'win32'
@@ -17,31 +17,8 @@ const isWin = process.platform === 'win32'
 // FIXME: Typescript extensions are added temporarily until we find a better
 // way of supporting arbitrary extensions
 const EXTENSION_RE = /\.(js|mjs|cjs|ts|mts|cts)$/
-const NODE_VERSION = process.versions.node.split('.')
-const NODE_MAJOR = Number(NODE_VERSION[0])
-const NODE_MINOR = Number(NODE_VERSION[1])
 const HANDLED_FORMATS = new Set(['builtin', 'module', 'commonjs'])
 const TRACE_WARNINGS = process.execArgv.includes('--trace-warnings')
-
-// On Node.js new enough to read a module's source through the loader, we parse
-// the source for export names. On older Node.js that is unreliable, so we
-// import the module and read its namespace keys instead. Both branches are
-// generators (yielding `[LOAD, ...]` via `getExportsImpl`, or `[IMPORT, ...]`)
-// so `processModule` can `yield *` whichever one applies, and the same body
-// drives synchronously (`module.registerHooks`) or asynchronously
-// (`module.register`).
-const canReadExportsFromSource = NODE_MAJOR > 16 || (NODE_MAJOR === 16 && NODE_MINOR >= 16)
-
-function dynamicImport (url) {
-  return import(url)
-}
-
-function * getExports (url, context) {
-  if (canReadExportsFromSource) {
-    return yield * getExportsImpl(url, context)
-  }
-  return Object.keys(yield [IMPORT, url])
-}
 
 function hasIitm (url) {
   // Fast path: avoid URL parsing on the hot path when there's clearly no iitm.
@@ -254,8 +231,8 @@ function buildSetter (n, srcUrl) {
  *
  * Written as a "sans-io" generator (see `lib/io.mjs`): instead of calling the
  * loader's resolve/load hooks directly it `yield`s `[RESOLVE, ...]` to resolve
- * star re-exports and `[LOAD, ...]`/`[IMPORT, ...]` (via {@link getExports}) to
- * read source, and is driven by either {@link driveSync} (for
+ * star re-exports and `[LOAD, ...]` (via {@link getExports}) to read source,
+ * and is driven by either {@link driveSync} (for
  * `module.registerHooks`) or {@link driveAsync} (for `module.register`). The
  * body is identical for both, so there is a single implementation to maintain.
  *
@@ -644,7 +621,7 @@ register(${JSON.stringify(realUrl)}, _, set, get, ${JSON.stringify(originalSpeci
       try {
         const setters = await driveAsync(
           processModule({ srcUrl: realUrl, context }),
-          { resolve: cachedResolve, load: parentGetSource, dynamicImport }
+          { resolve: cachedResolve, load: parentGetSource }
         )
         return { source: onWrapSuccess(realUrl, context, originalSpecifier, setters) }
       } catch (cause) {
