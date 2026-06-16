@@ -46,4 +46,18 @@ strictEqual(typeof fs.readFileSync, 'function', 'readFileSync named export shoul
 strictEqual(typeof fs.existsSync, 'function', 'existsSync named export should be present')
 strictEqual(typeof fs.default.readFileSync, 'function', 'default should carry the CJS exports')
 
-console.log('✅ module.registerHooks preserved builtin named exports for node:events and node:fs')
+// A bare builtin specifier (`require('crypto')`) resolves to a `node:`-prefixed
+// URL that Node's synchronous resolver leaves without `format: 'builtin'`. The
+// resolve hook has to restore it, otherwise the load hook treats `node:crypto`
+// as a path and reads it from disk (ENOENT). Both spellings resolve to the same
+// wrapper URL, so they must return the identical object.
+const require = nodeModule.createRequire(import.meta.url)
+for (const builtinName of ['crypto', 'http', 'events']) {
+  strictEqual(
+    require(builtinName),
+    require(`node:${builtinName}`),
+    `'${builtinName}' and 'node:${builtinName}' must wrap to the identical object`
+  )
+}
+
+console.log('✅ module.registerHooks preserved builtin named exports and bare/node: identity')

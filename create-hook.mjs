@@ -464,7 +464,10 @@ export function createHook (meta) {
     return {
       url: addIitm(result.url),
       shortCircuit: true,
-      format: result.format
+      // Node's synchronous resolver drops `format: 'builtin'` for bare builtin
+      // specifiers (`require('crypto')` -> `node:crypto`), so restore it;
+      // otherwise the load hook reads `node:crypto` from disk and throws ENOENT.
+      format: result.format ?? (result.url.startsWith('node:') ? 'builtin' : undefined)
     }
   }
 
