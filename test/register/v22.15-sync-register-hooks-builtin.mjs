@@ -46,18 +46,25 @@ strictEqual(typeof fs.readFileSync, 'function', 'readFileSync named export shoul
 strictEqual(typeof fs.existsSync, 'function', 'existsSync named export should be present')
 strictEqual(typeof fs.default.readFileSync, 'function', 'default should carry the CJS exports')
 
-// A bare builtin specifier (`require('crypto')`) resolves to a `node:`-prefixed
-// URL that Node's synchronous resolver leaves without `format: 'builtin'`. The
-// resolve hook has to restore it, otherwise the load hook treats `node:crypto`
-// as a path and reads it from disk (ENOENT). Both spellings resolve to the same
-// wrapper URL, so they must return the identical object.
+// `module.registerHooks` also intercepts CommonJS `require()`. Unlike the ESM
+// imports above, a `require()` must return the native, mutable builtin rather
+// than the (non-extensible) ESM namespace the wrapper produces. npm's bundled
+// graceful-fs does
+// `Object.defineProperty(require('fs'), Symbol.for('graceful-fs.queue'), ...)`,
+// which throws "object is not extensible" when require('fs') is wrapped.
 const require = nodeModule.createRequire(import.meta.url)
+const requiredFs = require('fs')
+ok(Object.isExtensible(requiredFs), 'require("fs") must return an extensible object, not an ESM namespace')
+Object.defineProperty(requiredFs, Symbol.for('graceful-fs.queue'), { value: [], configurable: true })
+ok(Symbol.for('graceful-fs.queue') in requiredFs, 'defining a property on require("fs") must succeed')
+
+// Bare and `node:`-prefixed require() resolve to the same native builtin.
 for (const builtinName of ['crypto', 'http', 'events']) {
   strictEqual(
     require(builtinName),
     require(`node:${builtinName}`),
-    `'${builtinName}' and 'node:${builtinName}' must wrap to the identical object`
+    `'${builtinName}' and 'node:${builtinName}' must resolve to the identical builtin`
   )
 }
 
-console.log('✅ module.registerHooks preserved builtin named exports and bare/node: identity')
+console.log('✅ module.registerHooks wrapped builtin imports and kept require() native')

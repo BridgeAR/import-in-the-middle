@@ -390,6 +390,19 @@ export function createHook (meta) {
       return result
     }
 
+    // The synchronous hooks (`module.registerHooks`) fire for `require()` as well
+    // as `import`, but iitm only owns the ESM graph: CommonJS modules are
+    // instrumented separately through require-in-the-middle, and `require()` must
+    // return the native, mutable module value (e.g. graceful-fs does
+    // `Object.defineProperty(require('fs'), ...)`, which throws on a frozen ESM
+    // namespace). Node reports the active module system in `context.conditions`
+    // ('require' vs 'import'), so leave any require() resolution untouched. The
+    // asynchronous hook never sees the 'require' condition, so this is a no-op
+    // there and only affects the synchronous path.
+    if (context.conditions?.includes('require')) {
+      return result
+    }
+
     // For included/excluded modules, we check the specifier to match libraries
     // that are loaded with bare specifiers from node_modules.
     //
