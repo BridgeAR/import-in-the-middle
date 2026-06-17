@@ -6,14 +6,15 @@
 import * as nodeModule from 'node:module'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { register } from '../../register-hooks.mjs'
+import { register, supportsSyncHooks } from '../../register-hooks.mjs'
 import Hook from '../../index.js'
 import { ok, rejects, strictEqual } from 'node:assert'
 
-// module.registerHooks exists on >= 22.15 and >= 24, but not on 23.0-23.4. The
-// filename gate only covers the major/minor floor, so guard at runtime too.
-if (typeof nodeModule.registerHooks !== 'function') {
-  console.log(`Skipping ${process.env.IITM_TEST_FILE || import.meta.url}: module.registerHooks is unavailable`)
+// module.registerHooks accepts the loader's nullish CommonJS source only on
+// >= 22.22.3 / >= 24.11.1 / >= 25.1.0 / >= 26; the filename gate only covers the
+// major/minor floor, so guard on the real capability at runtime.
+if (!supportsSyncHooks()) {
+  console.log(`Skipping ${process.env.IITM_TEST_FILE || import.meta.url}: synchronous hooks unsupported on this Node.js`)
   process.exit(0)
 }
 

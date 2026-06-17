@@ -1,5 +1,7 @@
 import * as module from 'module'
-import { createHook } from './create-hook.mjs'
+import { createHook, supportsSyncHooks } from './create-hook.mjs'
+
+export { supportsSyncHooks }
 
 const hook = createHook(import.meta)
 
@@ -16,7 +18,10 @@ let registered = false
  * entry point are visible to the loader directly and no acknowledgement step is
  * required.
  *
- * Requires a Node.js version with `module.registerHooks()` (>= 22.15.0 / >= 24).
+ * Requires a Node.js version whose `module.registerHooks` accepts the nullish
+ * CommonJS source the loader relies on: >= 22.22.3, >= 24.11.1, >= 25.1.0, or
+ * >= 26.0.0 (see `supportsSyncHooks`). Use that predicate to fall back to the
+ * asynchronous `module.register` loader on unsupported versions.
  *
  * ```js
  * import { register } from 'import-in-the-middle/register-hooks.mjs'
@@ -35,10 +40,12 @@ let registered = false
  * @returns {void}
  */
 export function register (options) {
-  if (typeof module.registerHooks !== 'function') {
+  if (!supportsSyncHooks()) {
     throw new Error(
-      "'import-in-the-middle' synchronous hooks require a Node.js version with " +
-      "'module.registerHooks()' (>= 22.15.0 / >= 24.0.0)"
+      "'import-in-the-middle' synchronous hooks require a Node.js version whose " +
+      'module.registerHooks accepts nullish CommonJS source ' +
+      '(>= 22.22.3, >= 24.11.1, >= 25.1.0, or >= 26.0.0); ' +
+      'see https://github.com/nodejs/node/pull/59929'
     )
   }
 

@@ -1,13 +1,12 @@
 // Covers the option-carrying and double-registration branches of the
 // synchronous `module.registerHooks` integration.
 
-import * as nodeModule from 'node:module'
-import { register } from '../../register-hooks.mjs'
+import { register, supportsSyncHooks } from '../../register-hooks.mjs'
 import Hook from '../../index.js'
 import { ok, strictEqual } from 'node:assert'
 
-if (typeof nodeModule.registerHooks !== 'function') {
-  console.log(`Skipping ${process.env.IITM_TEST_FILE || import.meta.url}: module.registerHooks is unavailable`)
+if (!supportsSyncHooks()) {
+  console.log(`Skipping ${process.env.IITM_TEST_FILE || import.meta.url}: synchronous hooks unsupported on this Node.js`)
   process.exit(0)
 }
 
