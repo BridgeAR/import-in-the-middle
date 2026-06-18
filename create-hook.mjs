@@ -352,7 +352,7 @@ function addIitm (url) {
 export function createHook (meta) {
   let cachedResolve
   const iitmURL = new URL('lib/register.js', meta.url).toString()
-  let includeModules, excludeModules
+  let includeModules, excludeModules, shouldInclude
 
   // Track CJS module URLs that IITM has wrapped. On Node 24+, CJS modules loaded
   // via loadCJSModule (in an ESM import chain) have their require() calls for
@@ -370,6 +370,12 @@ export function createHook (meta) {
   function applyOptions (data) {
     includeModules = ensureArrayWithBareSpecifiersFileUrlsAndRegex(data.include, 'include')
     excludeModules = ensureArrayWithBareSpecifiersFileUrlsAndRegex(data.exclude, 'exclude')
+
+    // A consumer can supply its own matcher as `shouldInclude(url, specifier)`,
+    // taking ownership of the include/exclude decision instead of expressing it
+    // as bare-specifier / file-URL / regex lists. When given, it replaces the
+    // include/exclude options and is called with the resolved URL and specifier.
+    shouldInclude = typeof data.shouldInclude === 'function' ? data.shouldInclude : undefined
 
     if (data.addHookMessagePort) {
       data.addHookMessagePort.on('message', (modules) => {
@@ -417,6 +423,12 @@ export function createHook (meta) {
       return result
     }
 
+    // Never wrap a module whose format we don't handle (e.g. json, wasm); this
+    // holds regardless of how inclusion is decided below.
+    if (result.format && !HANDLED_FORMATS.has(result.format)) {
+      return result
+    }
+
     // The synchronous hooks (`module.registerHooks`) fire for `require()` as well
     // as `import`, but iitm only owns the ESM graph: CommonJS modules are
     // instrumented separately through require-in-the-middle, and `require()` must
@@ -430,38 +442,42 @@ export function createHook (meta) {
       return result
     }
 
-    // For included/excluded modules, we check the specifier to match libraries
-    // that are loaded with bare specifiers from node_modules.
-    //
-    // For non-bare specifier imports, we match to the full file URL because
-    // using relative paths would be very error prone!
-    let resultPath
-    if (result.url.startsWith('file:')) {
-      const stackTraceLimit = Error.stackTraceLimit
-      Error.stackTraceLimit = 0
-      try {
-        resultPath = fileURLToPath(result.url)
-      } catch {}
-      Error.stackTraceLimit = stackTraceLimit
-    }
-    function match (each) {
-      if (each instanceof RegExp) {
-        return each.test(result.url)
+    if (shouldInclude !== undefined) {
+      // Consumer-owned matcher: it decides from the URL and specifier alone, so
+      // the resolved file path is neither computed nor passed here.
+      if (!shouldInclude(result.url, specifier)) {
+        return result
+      }
+    } else {
+      // For included/excluded modules, we check the specifier to match libraries
+      // that are loaded with bare specifiers from node_modules.
+      //
+      // For non-bare specifier imports, we match to the full file URL because
+      // using relative paths would be very error prone!
+      let resultPath
+      if (result.url.startsWith('file:')) {
+        const stackTraceLimit = Error.stackTraceLimit
+        Error.stackTraceLimit = 0
+        try {
+          resultPath = fileURLToPath(result.url)
+        } catch {}
+        Error.stackTraceLimit = stackTraceLimit
+      }
+      function match (each) {
+        if (each instanceof RegExp) {
+          return each.test(result.url)
+        }
+
+        return each === specifier || each === result.url || (resultPath && each === resultPath)
       }
 
-      return each === specifier || each === result.url || (resultPath && each === resultPath)
-    }
+      if (includeModules && !includeModules.some(match)) {
+        return result
+      }
 
-    if (result.format && !HANDLED_FORMATS.has(result.format)) {
-      return result
-    }
-
-    if (includeModules && !includeModules.some(match)) {
-      return result
-    }
-
-    if (excludeModules && excludeModules.some(match)) {
-      return result
+      if (excludeModules && excludeModules.some(match)) {
+        return result
+      }
     }
 
     if (isIitm(parentURL, meta) || (parentURL && hasIitm(parentURL))) {
