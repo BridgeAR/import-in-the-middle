@@ -352,7 +352,8 @@ function addIitm (url) {
 export function createHook (meta) {
   let cachedResolve
   const iitmURL = new URL('lib/register.js', meta.url).toString()
-  let includeModules, excludeModules, shouldInclude
+  let includeModules, excludeModules
+  let shouldInclude = defaultShouldInclude
 
   // Track CJS module URLs that IITM has wrapped. On Node 24+, CJS modules loaded
   // via loadCJSModule (in an ESM import chain) have their require() calls for
@@ -361,6 +362,43 @@ export function createHook (meta) {
   // of the native CJS module value (e.g. EventEmitter constructor), breaking
   // patterns like `class App extends require('events') {}`.
   const cjsInIitmChain = new Set()
+
+  // Default matcher, used unless the consumer supplies its own `shouldInclude`
+  // (see applyOptions). It applies the include/exclude lists, so finishResolve
+  // always has a predicate to call and never has to special-case its absence.
+  //
+  // We check the specifier to match libraries loaded with bare specifiers from
+  // node_modules, and the full file URL for non-bare specifier imports (relative
+  // paths would be error prone). An absolute path entry added via Hook over the
+  // message port matches the resolved file path, so it is resolved here.
+  function defaultShouldInclude (url, specifier) {
+    let resultPath
+    if (url.startsWith('file:')) {
+      const stackTraceLimit = Error.stackTraceLimit
+      Error.stackTraceLimit = 0
+      try {
+        resultPath = fileURLToPath(url)
+      } catch {}
+      Error.stackTraceLimit = stackTraceLimit
+    }
+    function match (each) {
+      if (each instanceof RegExp) {
+        return each.test(url)
+      }
+
+      return each === specifier || each === url || (resultPath && each === resultPath)
+    }
+
+    if (includeModules && !includeModules.some(match)) {
+      return false
+    }
+
+    if (excludeModules && excludeModules.some(match)) {
+      return false
+    }
+
+    return true
+  }
 
   // Applies the include/exclude/message-port configuration. Shared by the
   // asynchronous `initialize` (off-thread `module.register`, which receives
@@ -373,9 +411,10 @@ export function createHook (meta) {
 
     // A consumer can supply its own matcher as `shouldInclude(url, specifier)`,
     // taking ownership of the include/exclude decision instead of expressing it
-    // as bare-specifier / file-URL / regex lists. When given, it replaces the
-    // include/exclude options and is called with the resolved URL and specifier.
-    shouldInclude = typeof data.shouldInclude === 'function' ? data.shouldInclude : undefined
+    // as bare-specifier / file-URL / regex lists. It replaces the default list
+    // matcher and is called with the resolved URL and specifier; otherwise the
+    // default applies the include/exclude options.
+    shouldInclude = typeof data.shouldInclude === 'function' ? data.shouldInclude : defaultShouldInclude
 
     if (data.addHookMessagePort) {
       data.addHookMessagePort.on('message', (modules) => {
@@ -442,42 +481,10 @@ export function createHook (meta) {
       return result
     }
 
-    if (shouldInclude !== undefined) {
-      // Consumer-owned matcher: it decides from the URL and specifier alone, so
-      // the resolved file path is neither computed nor passed here.
-      if (!shouldInclude(result.url, specifier)) {
-        return result
-      }
-    } else {
-      // For included/excluded modules, we check the specifier to match libraries
-      // that are loaded with bare specifiers from node_modules.
-      //
-      // For non-bare specifier imports, we match to the full file URL because
-      // using relative paths would be very error prone!
-      let resultPath
-      if (result.url.startsWith('file:')) {
-        const stackTraceLimit = Error.stackTraceLimit
-        Error.stackTraceLimit = 0
-        try {
-          resultPath = fileURLToPath(result.url)
-        } catch {}
-        Error.stackTraceLimit = stackTraceLimit
-      }
-      function match (each) {
-        if (each instanceof RegExp) {
-          return each.test(result.url)
-        }
-
-        return each === specifier || each === result.url || (resultPath && each === resultPath)
-      }
-
-      if (includeModules && !includeModules.some(match)) {
-        return result
-      }
-
-      if (excludeModules && excludeModules.some(match)) {
-        return result
-      }
+    // `shouldInclude` is always set (the include/exclude list matcher by default,
+    // a consumer-provided predicate otherwise), so no nullish check is needed.
+    if (!shouldInclude(result.url, specifier)) {
+      return result
     }
 
     if (isIitm(parentURL, meta) || (parentURL && hasIitm(parentURL))) {
