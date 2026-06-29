@@ -7,10 +7,20 @@
 // whether to require the ESM loader at all) need to call it without pulling in
 // `create-hook.mjs` and its acorn / cjs-module-lexer dependency graph.
 
-// process.versions.node is always "major.minor.patch" (nightlies add a suffix
-// the regex ignores).
-const [, NODE_MAJOR, NODE_MINOR, NODE_PATCH] =
-  process.versions.node.match(/^(\d+)\.(\d+)\.(\d+)/).map(Number)
+// `process.versions.node` is always "major.minor.patch" (nightlies append a
+// "-suffix" that parseInt stops at). Only release lines 22/24/25 need the minor
+// and patch, so parse the major eagerly and read those lazily.
+const version = process.versions.node
+const NODE_MAJOR = parseInt(version, 10)
+let NODE_MINOR
+let NODE_PATCH
+
+function readMinorAndPatch () {
+  const firstDot = version.indexOf('.')
+  const secondDot = version.indexOf('.', firstDot + 1)
+  NODE_MINOR = parseInt(version.slice(firstDot + 1, secondDot), 10)
+  NODE_PATCH = parseInt(version.slice(secondDot + 1), 10)
+}
 
 /**
  * Whether the running Node.js can correctly run the synchronous loader via
@@ -28,8 +38,10 @@ const [, NODE_MAJOR, NODE_MINOR, NODE_PATCH] =
  */
 export function supportsSyncHooks () {
   if (NODE_MAJOR >= 26) return true
+  if (NODE_MAJOR < 22 || NODE_MAJOR === 23) return false
+
+  readMinorAndPatch()
   if (NODE_MAJOR === 25) return NODE_MINOR >= 1
   if (NODE_MAJOR === 24) return NODE_MINOR > 11 || (NODE_MINOR === 11 && NODE_PATCH >= 1)
-  if (NODE_MAJOR === 22) return NODE_MINOR > 22 || (NODE_MINOR === 22 && NODE_PATCH >= 3)
-  return false
+  return NODE_MINOR > 22 || (NODE_MINOR === 22 && NODE_PATCH >= 3)
 }
