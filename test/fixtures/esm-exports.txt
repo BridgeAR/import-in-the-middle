@@ -24,6 +24,7 @@ export default function* () { /* … */ } //| default
 
 // Aggregating modules
 export * from "module-name"; //| * from module-name
+export /* c */ * /* c */ from "module-name"; //| * from module-name
 export * as name1 from "module-name"; //| name1
 export { name1, /* …, */ nameN } from "module-name"; //| name1,nameN
 export { import1 as name1, import2 as name2, /* …, */ nameN } from "module-name"; //| name1,name2,nameN
