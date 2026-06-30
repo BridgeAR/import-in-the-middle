@@ -204,43 +204,18 @@ function buildSetter (n, srcUrl) {
   const objectKey = JSON.stringify(n)
   const reExportedName = n === 'default' ? n : objectKey
 
-  // For the module.exports synthetic export (Node 23+), fall back to $default
-  // when namespace['module.exports'] is not exposed by the native ESM namespace
-  // (builtins don't expose it). This ensures the IITM hook proxy returns the
-  // actual CJS value (e.g. EventEmitter) when an instrumentor reads
-  // capturedExports['module.exports'], rather than undefined.
-  const moduleExportsFallback = n === 'module.exports' ? ' ?? $default' : ''
+  // `1` makes __bind fall back to namespace['default'] for the module.exports
+  // synthetic export, which builtins don't expose on the native ESM namespace.
+  const fallback = n === 'module.exports' ? ', 1' : ''
 
+  // Builtins don't expose the module.exports synthetic name, so skip its re-export.
   const reExportLine = (n === 'module.exports' && (srcUrl.startsWith('node:') || builtinModules.includes(srcUrl)))
     ? ''
     : `export { ${variableName} as ${reExportedName} }`
 
-  return `
-      let ${variableName}
-      __overridden[${objectKey}] = false
-      let ${variableName}Defer = false
-      try {
-        ${variableName} = _[${objectKey}] = namespace[${objectKey}]${moduleExportsFallback}
-      } catch (err) {
-        if (!(err instanceof ReferenceError)) throw err
-        ${variableName}Defer = true
-      }
-
-      if (${variableName}Defer || ${variableName} === undefined) {
-        __pending.push(__makeUpdater(
-          ${objectKey},
-          () => namespace[${objectKey}]${moduleExportsFallback},
-          (v) => { ${variableName} = _[${objectKey}] = v }
-        ))
-      }
-      ${reExportLine}
-      set[${objectKey}] = (v) => {
-        __overridden[${objectKey}] = true
-        ${variableName} = v
-        return true
-      }
-      get[${objectKey}] = () => ${variableName}
-      `
+  return `let ${variableName}
+__bind(${objectKey}, v => { ${variableName} = v }, () => ${variableName}${fallback})
+${reExportLine}`
 }
 
 /**
@@ -639,6 +614,31 @@ function __flushPendingOnce () {
     if (fn() !== true) next.push(fn)
   }
   __pending = next
+}
+
+function __bind (key, write, read, useFallback) {
+  const readSource = useFallback
+    ? () => namespace[key] ?? namespace['default']
+    : () => namespace[key]
+  __overridden[key] = false
+  let deferred = false
+  try {
+    const v = readSource()
+    write(v)
+    _[key] = v
+  } catch (err) {
+    if (!(err instanceof ReferenceError)) throw err
+    deferred = true
+  }
+  if (deferred || read() === undefined) {
+    __pending.push(__makeUpdater(key, readSource, (v) => { write(v); _[key] = v }))
+  }
+  set[key] = (v) => {
+    __overridden[key] = true
+    write(v)
+    return true
+  }
+  get[key] = read
 }
 
 ${Array.from(setters.values()).join('\n')}
