@@ -24,3 +24,4 @@ ignorePatterns:
   - test/fixtures/duplicate-explicit.mjs
   - test/fixtures/duplicate.mjs
   - test/fixtures/export-types/default-call-expression-renamed.mjs
+  - test/fixtures/reexport-same-source.mjs

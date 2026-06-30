@@ -272,36 +272,56 @@ function buildSetter (n, srcUrl) {
  * @param {object} params.context Provided by the loaders API.
  * @param {boolean} [params.excludeDefault = false] Exclude the default export.
  *
- * @returns {Generator<Array, Map<string, string>>} A generator that yields I/O
- * operations and ultimately returns the shimmed setters for all the exports
- * from the module and any transitive export all modules.
+ * @returns {Generator<Array, { setters: Map<string, string>, origins: (Map<string, string> | undefined) }>}
+ * A generator that yields I/O operations and ultimately returns the shimmed
+ * setters for all the exports from the module and any transitive export all
+ * modules, plus the module each `*`-sourced name was defined in. `origins` lets
+ * a caller tell a genuinely ambiguous `export *` collision (same name from two
+ * different modules) apart from the same binding reached through more than one
+ * re-export path; it is `undefined` for a module with no `export *`.
  */
 function * processModule ({ srcUrl, context, excludeDefault = false }) {
   const exportNames = yield * getExports(srcUrl, context)
-  const starExports = new Set()
   const setters = new Map()
 
-  const addSetter = (name, setter, isStarExport = false) => {
+  // The dedup bookkeeping only matters once a `*` re-export collides with a name
+  // already present, so it stays unallocated for the common module whose names
+  // are all distinct. `starExports` records which live names came from a `*`
+  // re-export (so an explicit export can override them); `starOrigins` records
+  // the defining module of each `*`-sourced name, so two `*` re-exports of the
+  // same name can be told apart.
+  let starExports
+  let starOrigins
+
+  const addSetter = (name, setter, isStarExport, origin) => {
     if (setters.has(name)) {
       if (isStarExport) {
-        // If there's already a matching star export, delete it
+        // A `*` re-export collides with an existing `*` re-export. Per
+        // ECMAScript ResolveExport this is ambiguous and excluded only when the
+        // two name the same export from *different* modules; the same binding
+        // reached through two re-export chains resolves to one module and stays
+        // exported (tc39/ecma262#3715). Keep it only when the origins match.
         if (starExports.has(name)) {
-          setters.delete(name)
+          if (starOrigins.get(name) !== origin) {
+            setters.delete(name)
+            starExports.delete(name)
+            starOrigins.delete(name)
+          }
         }
-        // and return so this is excluded
+        // An explicit export already shadows the `*` re-export; leave it.
         return
       }
 
-      // if we already have this export but it is from a * export, overwrite it
-      if (starExports.has(name)) {
+      // An explicit named export overrides a `*` re-export of the same name.
+      if (starExports !== undefined && starExports.has(name)) {
         starExports.delete(name)
+        starOrigins.delete(name)
         setters.set(name, setter)
       }
     } else {
-      // Store export * exports so we know they can be overridden by explicit
-      // named exports
       if (isStarExport) {
         starExports.add(name)
+        starOrigins.set(name, origin)
       }
 
       setters.set(name, setter)
@@ -330,21 +350,26 @@ function * processModule ({ srcUrl, context, excludeDefault = false }) {
       // parent's `format` to know if this sub-module is ESM or CJS!
       const result = yield [RESOLVE, newSpecifier, { parentURL: srcUrl }]
 
-      const subSetters = yield * processModule({
+      // First `*` re-export: allocate the dedup bookkeeping lazily so a module
+      // without one pays nothing.
+      starExports ??= new Set()
+      starOrigins ??= new Map()
+
+      const sub = yield * processModule({
         srcUrl: result.url,
         context: { ...context, format: result.format },
         excludeDefault: true
       })
 
-      for (const [name, setter] of subSetters.entries()) {
-        addSetter(name, setter, true)
+      for (const [name, setter] of sub.setters.entries()) {
+        addSetter(name, setter, true, sub.origins?.get(name) ?? result.url)
       }
     } else {
-      addSetter(n, buildSetter(n, srcUrl))
+      addSetter(n, buildSetter(n, srcUrl), false)
     }
   }
 
-  return setters
+  return { setters, origins: starOrigins }
 }
 
 function addIitm (url) {
@@ -689,7 +714,7 @@ register(${JSON.stringify(realUrl)}, _, set, get, ${JSON.stringify(originalSpeci
       const originalSpecifier = specifiers.get(realUrl)
 
       try {
-        const setters = await driveAsync(
+        const { setters } = await driveAsync(
           processModule({ srcUrl: realUrl, context }),
           { resolve: cachedResolve, load: parentGetSource }
         )
@@ -713,7 +738,7 @@ register(${JSON.stringify(realUrl)}, _, set, get, ${JSON.stringify(originalSpeci
       const originalSpecifier = specifiers.get(realUrl)
 
       try {
-        const setters = driveSync(
+        const { setters } = driveSync(
           processModule({ srcUrl: realUrl, context }),
           { resolve: cachedResolve, load: nextLoad }
         )
