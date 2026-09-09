@@ -22,6 +22,7 @@ const isWin = process.platform === 'win32'
 // cycle would otherwise hit. Below it the recursion pays only an integer
 // compare per level and allocates no set.
 const STAR_CYCLE_DEPTH = 100
+const IN_PLACE_UNSAFE_IDENTIFIER_RE = /\\u|__[iI]itm|\b(?:globalThis|Symbol)\b/
 
 // FIXME: Typescript extensions are added temporarily until we find a better
 // way of supporting arbitrary extensions
@@ -352,15 +353,20 @@ function addIitm (url) {
 
 /**
  * @param {{ url: string }} meta
+ * @param {typeof import('./lib/rewrite-esm-exports.mjs').rewriteEsmExports} [rewriteExports]
  */
-export function createHook (meta) {
+export function createHook (meta, rewriteExports) {
   /** @type {Map<string, SpecifierData>} */
   const specifiers = new Map()
   let cachedResolve
   const iitmURL = new URL('lib/register.js', meta.url).toString()
+  const iitmRegisterPath = fileURLToPath(iitmURL)
   let includeModules, excludeModules
   let shouldInclude = defaultShouldInclude
   let disableCjsSourceStripping = false
+  // Filtered aliases can resolve to the same URL without sharing the query-tagged
+  // identity used by the in-place path, which would evaluate the module twice.
+  let canRewriteInPlace = true
 
   // Track CJS module URLs that IITM has wrapped. On Node 24+, CJS modules loaded
   // via loadCJSModule (in an ESM import chain) have their require() calls for
@@ -369,6 +375,7 @@ export function createHook (meta) {
   // of the native CJS module value (e.g. EventEmitter constructor), breaking
   // patterns like `class App extends require('events') {}`.
   const cjsInIitmChain = new Set()
+  const inPlaceModules = new Set()
 
   // Default matcher, used unless the consumer supplies its own `shouldInclude`
   // (see applyOptions). It applies the include/exclude lists, so finishResolve
@@ -422,6 +429,8 @@ export function createHook (meta) {
     // matcher and is called with the resolved URL and specifier; otherwise the
     // default applies the include/exclude options.
     shouldInclude = typeof data.shouldInclude === 'function' ? data.shouldInclude : defaultShouldInclude
+    canRewriteInPlace = includeModules === undefined && excludeModules === undefined &&
+      shouldInclude === defaultShouldInclude && !data.addHookMessagePort
 
     if (data.disableCjsSourceStripping === true) {
       disableCjsSourceStripping = true
@@ -499,7 +508,9 @@ export function createHook (meta) {
     }
 
     if (isIitm(parentURL, meta) || (parentURL && hasIitm(parentURL))) {
-      return result
+      if (!parentURL || !inPlaceModules.has(deleteIitm(parentURL))) {
+        return result
+      }
     }
 
     // When a CJS module is loaded by an IITM shim, its require() calls for
@@ -674,6 +685,44 @@ register(${JSON.stringify(realUrl)}, __binder, ${JSON.stringify(originalSpecifie
   }
 
   /**
+   * @param {string} realUrl The original module URL.
+   * @param {string} source The original module source.
+   * @param {string} originalSpecifier The original import specifier.
+   * @returns {string | undefined} Rewritten source when every export is eligible.
+   */
+  function buildInPlaceSource (realUrl, source, originalSpecifier) {
+    if (IN_PLACE_UNSAFE_IDENTIFIER_RE.test(source)) return
+
+    const rewritten = rewriteExports(source, realUrl)
+    if (rewritten === undefined) return
+
+    let declarations = ''
+    let writeCases = ''
+    let exportSpecifiers = ''
+    let keys = ''
+    let values = ''
+    for (let index = 0; index < rewritten.exports.length; index++) {
+      const { name, local } = rewritten.exports[index]
+      const binding = `__iitm${index}`
+      declarations += index === 0 ? binding : `, ${binding}`
+      writeCases += `    case ${index}: ${binding} = value; break\n`
+      exportSpecifiers += index === 0 ? `${binding} as ${name}` : `, ${binding} as ${name}`
+      keys += index === 0 ? JSON.stringify(name) : `, ${JSON.stringify(name)}`
+      values += index === 0 ? local : `, ${local}`
+    }
+
+    return `${rewritten.source}
+let ${declarations}
+function __iitmWrite (index, value) {
+  switch (index) {
+${writeCases}  }
+}
+export { ${exportSpecifiers} }
+globalThis[Symbol.for('import-in-the-middle')][${JSON.stringify(iitmRegisterPath)}](${JSON.stringify(realUrl)}, ${JSON.stringify(originalSpecifier)}, [${keys}], [${values}], __iitmWrite)
+`
+  }
+
+  /**
    * Finalizes a successful wrap and builds its module source.
    *
    * @param {string} realUrl The URL of the wrapped module.
@@ -768,9 +817,43 @@ register(${JSON.stringify(realUrl)}, __binder, ${JSON.stringify(originalSpecifie
       }
 
       try {
+        let loadedResult
+        if (rewriteExports !== undefined && canRewriteInPlace) {
+          loadedResult = nextLoad(realUrl, processContext)
+          if (loadedResult.format === 'module' && loadedResult.source != null) {
+            const source = typeof loadedResult.source === 'string'
+              ? loadedResult.source
+              : Buffer.from(loadedResult.source).toString('utf8')
+            const instrumented = buildInPlaceSource(realUrl, source, originalSpecifier)
+            if (instrumented !== undefined) {
+              specifiers.delete(realUrl)
+              inPlaceModules.add(realUrl)
+              return { source: instrumented }
+            }
+          }
+        }
+
+        let load = nextLoad
+        if (loadedResult !== undefined) {
+          let pendingResult = loadedResult
+          /**
+           * @param {string} requestedUrl The URL requested by the export scanner.
+           * @param {Partial<LoadContext>} [requestedContext] Its loader context.
+           * @returns {LoadResult}
+           */
+          load = function loadOnce (requestedUrl, requestedContext) {
+            if (pendingResult !== undefined && requestedUrl === realUrl) {
+              const result = pendingResult
+              pendingResult = undefined
+              return result
+            }
+            return nextLoad(requestedUrl, requestedContext)
+          }
+        }
+
         const { bindings } = driveSync(
           processModule({ srcUrl: realUrl, context: processContext }),
-          { resolve: cachedResolve, load: nextLoad }
+          { resolve: cachedResolve, load }
         )
         return { source: onWrapSuccess(realUrl, processContext, originalSpecifier, bindings) }
       } catch (cause) {

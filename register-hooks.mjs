@@ -1,10 +1,12 @@
 import * as module from 'module'
 import { createHook } from './create-hook.mjs'
+import { rewriteEsmExports } from './lib/rewrite-esm-exports.mjs'
 import { supportsSyncHooks } from './supports-sync-hooks.mjs'
+import './lib/register.js'
 
 export { supportsSyncHooks }
 
-const hook = createHook(import.meta)
+const hook = createHook(import.meta, rewriteEsmExports)
 
 let registered = false
 
