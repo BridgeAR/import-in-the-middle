@@ -46,7 +46,11 @@ nodeModule.registerHooks({
     }
     if (url === WRAPPER_URL) {
       wrapperLoadCount += 1
-      return { format: 'module', source: `export let value = ${wrapperLoadCount}\n`, shortCircuit: true }
+      return {
+        format: 'module',
+        source: `let value = ${wrapperLoadCount}; export { value }\n`,
+        shortCircuit: true
+      }
     }
     return nextLoad(url, context)
   }

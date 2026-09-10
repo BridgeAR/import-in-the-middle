@@ -7,7 +7,7 @@ import { createRequire } from 'module'
 import { strictEqual, throws } from 'assert'
 
 const require = createRequire(import.meta.url)
-const { ModuleBinder } = require('../../lib/register.js')
+const { ModuleBinder, toHook } = require('../../lib/register.js')
 
 /**
  * @param {object} source The wrapped module namespace.
@@ -102,6 +102,32 @@ function interceptTimeouts () {
   a.write('foo', 3)
   strictEqual(a.namespace.foo, 3)
   strictEqual(b.namespace.bar, 2)
+}
+
+// In-place binders read the original mutable cell, while Hook writes update it.
+{
+  let live = 1
+  ModuleBinder.bindInPlace(
+    'file:///in-place.mjs',
+    './in-place.mjs',
+    ['live'],
+    [live],
+    () => live,
+    (index, value) => {
+      strictEqual(index, 0)
+      live = value
+    }
+  )
+  const proxy = toHook.at(-1)[1]
+  live = 2
+  strictEqual(proxy.live, 2, 'proxy reads follow later module assignments')
+  strictEqual(
+    Object.getOwnPropertyDescriptor(proxy, 'live').value,
+    2,
+    'property descriptors follow later module assignments'
+  )
+  proxy.live = 3
+  strictEqual(live, 3, 'Hook writes update the original mutable binding')
 }
 
 // A source still in its dead zone on the retry read keeps the updater pending
