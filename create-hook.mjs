@@ -1020,10 +1020,10 @@ ${reexports}${inPlaceBinder}(${JSON.stringify(realUrl)}, ${JSON.stringify(origin
    * @param {string} url
    * @param {LoadContext} context
    * @param {(url: string, context?: Partial<LoadContext>) => LoadResult} nextLoad
+   * @param {boolean} tagged Whether the URL contains the IITM marker.
+   * @param {boolean} canonical Whether to rewrite the canonical module in place.
    */
-  function getSourceSync (url, context, nextLoad) {
-    const tagged = hasIitm(url)
-    const canonical = !tagged && rewriteExports !== undefined && canRewriteInPlace && specifiers.has(url)
+  function getSourceSync (url, context, nextLoad, tagged, canonical) {
     if (tagged || canonical) {
       const realUrl = tagged ? deleteIitm(url) : url
       const specifierData = specifiers.get(realUrl)
@@ -1151,8 +1151,11 @@ ${reexports}${inPlaceBinder}(${JSON.stringify(realUrl)}, ${JSON.stringify(origin
       }
     }
 
-    if (hasIitm(url) || (rewriteExports !== undefined && canRewriteInPlace && specifiers.has(url))) {
-      const result = getSourceSync(url, context, nextLoad)
+    const tagged = hasIitm(url)
+    const canonical = !tagged && context.format === 'module' && rewriteExports !== undefined &&
+      canRewriteInPlace && specifiers.has(url)
+    if (tagged || canonical) {
+      const result = getSourceSync(url, context, nextLoad, tagged, canonical)
       // If wrapping failed, `getSourceSync()` may have fallen back to `nextLoad`,
       // which can legally return `source: null` (e.g. for non-JS formats).
       if (result && typeof result === 'object' && result.source != null) {

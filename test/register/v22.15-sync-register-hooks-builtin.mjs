@@ -20,11 +20,13 @@ register()
 
 let eventsHookCount = 0
 let fsHookCount = 0
+let utilHookCount = 0
 
 // eslint-disable-next-line no-new
-new Hook(['events', 'fs'], (exports, name) => {
+new Hook(['events', 'fs', 'util'], (exports, name) => {
   if (name === 'events') eventsHookCount++
   if (name === 'fs') fsHookCount++
+  if (name === 'util') utilHookCount++
 })
 
 const events = await import('node:events')
@@ -46,6 +48,9 @@ strictEqual(typeof fs.readFileSync, 'function', 'readFileSync named export shoul
 strictEqual(typeof fs.existsSync, 'function', 'existsSync named export should be present')
 strictEqual(typeof fs.default.readFileSync, 'function', 'default should carry the CJS exports')
 
+const util = await import('node:util')
+strictEqual(utilHookCount, 1, 'util hook should fire exactly once')
+
 // `module.registerHooks` also intercepts CommonJS `require()`. Unlike the ESM
 // imports above, a `require()` must return the native, mutable builtin rather
 // than the (non-extensible) ESM namespace the wrapper produces. npm's bundled
@@ -57,6 +62,9 @@ const requiredFs = require('fs')
 ok(Object.isExtensible(requiredFs), 'require("fs") must return an extensible object, not an ESM namespace')
 Object.defineProperty(requiredFs, Symbol.for('graceful-fs.queue'), { value: [], configurable: true })
 ok(Symbol.for('graceful-fs.queue') in requiredFs, 'defining a property on require("fs") must succeed')
+
+const requiredDeprecate = require('../fixtures/re-export-cjs-built-in.js')
+strictEqual(requiredDeprecate, util.deprecate, 'a CJS child should require the native builtin after an ESM import')
 
 // Bare and `node:`-prefixed require() resolve to the same native builtin.
 for (const builtinName of ['crypto', 'http', 'events']) {
