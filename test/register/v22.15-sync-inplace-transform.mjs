@@ -7,8 +7,7 @@
 // generated wrapper module. The transform handles the shapes a single
 // es-module-lexer pass can classify: inline `const` / `let` / `var` / `function`
 // / `class`, an `export async function`, and a named default function. Immutable
-// bindings with possible internal references use dual cells. Unreferenced and
-// mutable declarations reuse their native cells.
+// immutable bindings use dual cells. Mutable declarations reuse their native cells.
 import { match, ok, strictEqual } from 'node:assert/strict'
 import * as nodeModule from 'node:module'
 
@@ -23,6 +22,8 @@ if (!supportsSyncHooks()) {
 const STRING_SOURCE_URL = 'file:///virtual/iitm-string-source.mjs'
 const TYPED_SOURCE_URL = 'file:///virtual/iitm-typed-source.mjs'
 const COMMENT_DEFAULT_URL = 'file:///virtual/iitm-comment-default.mjs'
+const HASHBANG_CR_URL = 'file:///virtual/iitm-hashbang-cr.mjs'
+const HASHBANG_CRLF_URL = 'file:///virtual/iitm-hashbang-crlf.mjs'
 const typedBytes = Uint8Array.from(Buffer.from('xxexport const value = 41\nzz'))
 nodeModule.registerHooks({
   /**
@@ -39,6 +40,12 @@ nodeModule.registerHooks({
     }
     if (specifier === 'iitm-comment-default' || specifier === COMMENT_DEFAULT_URL) {
       return { url: COMMENT_DEFAULT_URL, format: 'module', shortCircuit: true }
+    }
+    if (specifier === 'iitm-hashbang-cr' || specifier === HASHBANG_CR_URL) {
+      return { url: HASHBANG_CR_URL, format: 'module', shortCircuit: true }
+    }
+    if (specifier === 'iitm-hashbang-crlf' || specifier === HASHBANG_CRLF_URL) {
+      return { url: HASHBANG_CRLF_URL, format: 'module', shortCircuit: true }
     }
     return nextResolve(specifier, context)
   },
@@ -64,6 +71,12 @@ nodeModule.registerHooks({
         source: 'export/**/default function value () { return 42 }\n',
         shortCircuit: true
       }
+    }
+    if (url === HASHBANG_CR_URL) {
+      return { format: 'module', source: '#!node\rexport const url = import.meta.url\n', shortCircuit: true }
+    }
+    if (url === HASHBANG_CRLF_URL) {
+      return { format: 'module', source: '#!node\r\nexport const url = import.meta.url\n', shortCircuit: true }
     }
     return nextLoad(url, context)
   }
@@ -105,6 +118,10 @@ const hook = (exports, name) => {
     exports.value += 1
   } else if (name === '/virtual/iitm-comment-default.mjs') {
     commentDefaultHooked = true
+  } else if (/inplace-false-mutation\.mjs/.test(name)) {
+    exports.value = 2
+  } else if (/inplace-conditional-mutation\.mjs/.test(name)) {
+    exports.connect = () => 'hooked'
   }
 }
 // eslint-disable-next-line no-new
@@ -125,7 +142,7 @@ strictEqual(
 )
 
 strictEqual(namespace.foo, 57, 'hook-mutated named export is visible to importers')
-strictEqual(namespace.isolated, 15, 'an unreferenced const uses its native export cell')
+strictEqual(namespace.isolated, 15, 'an unreferenced const uses its Hook-facing export cell')
 strictEqual(typeof namespace.greet, 'function', 'other named exports are preserved')
 strictEqual(typeof namespace.Counter, 'function', 'named class export is preserved')
 strictEqual(new namespace.Counter().increment(), 1, 'class export is usable')
@@ -138,7 +155,7 @@ strictEqual(typeof namespace.default, 'function', 'the named default function is
 // value. This matches the wrapper and is the correctness fix over a single-cell
 // rewrite.
 strictEqual(namespace.greet(), 'hi 42', 'internal reference is unaffected by the override (matches wrapper)')
-strictEqual(namespace.default(), 'hi 42:hooked', 'an unreferenced default function uses its native export cell')
+strictEqual(namespace.default(), 'hi 42:hooked', 'a named default function uses its Hook-facing export cell')
 
 const stringSource = await import('iitm-string-source')
 ok(stringSourceHooked)
@@ -151,6 +168,13 @@ strictEqual(typedSource.value, 42, 'typed-array source respects its byte offset 
 const commentDefault = await import('iitm-comment-default')
 ok(commentDefaultHooked)
 strictEqual(commentDefault.default(), 42, 'comments before default fall back to the wrapper')
+
+// @ts-expect-error - resolved by the in-process loader above
+const hashbangCr = await import('iitm-hashbang-cr')
+strictEqual(hashbangCr.url, HASHBANG_CR_URL)
+// @ts-expect-error - resolved by the in-process loader above
+const hashbangCrlf = await import('iitm-hashbang-crlf')
+strictEqual(hashbangCrlf.url, HASHBANG_CRLF_URL)
 
 let stack
 const importMeta = await import('../fixtures/inplace-import-meta.mjs')
@@ -180,6 +204,14 @@ liveBindings.initializeLate()
 strictEqual(liveBindings.Late.name, 'Late', 'later var initialization remains visible to importers')
 const liveConsumer = await import('../fixtures/inplace-live-consumer.mjs')
 strictEqual(liveConsumer.Sub.name, 'Sub', 'a synchronous class heritage read sees the initialized var export')
+
+const falseMutation = await import('../fixtures/inplace-false-mutation.mjs')
+strictEqual(falseMutation.value, 2, 'the Hook replacement remains visible through the wrapper')
+strictEqual(falseMutation.readValue(), 1, 'a property write does not select the native mutable binding')
+
+const conditionalMutation = await import('../fixtures/inplace-conditional-mutation.mjs')
+strictEqual(conditionalMutation.connect(), 'hooked', 'the Hook replacement remains visible through the wrapper')
+strictEqual(conditionalMutation.call(), 'original', 'a conditional write keeps module-internal reads unchanged')
 
 // The rewritten body comes first and byte-for-byte keeps the user's line
 // positions, so stack traces point at the original lines (the wrapper leaves the

@@ -6,7 +6,6 @@ import { URL, fileURLToPath } from 'url'
 import { inspect } from 'util'
 import { Module, builtinModules, createRequire } from 'module'
 import { getModuleExports, sourceToString } from './lib/get-exports.mjs'
-import { parseEsm } from './lib/get-esm-exports.mjs'
 import { RESOLVE, driveSync, driveAsync } from './lib/io.mjs'
 import { supportsSyncHooks } from './supports-sync-hooks.mjs'
 
@@ -37,8 +36,7 @@ const TRACE_WARNINGS = process.execArgv.includes('--trace-warnings')
 
 /** @typedef {import('node:module').LoadHookContext} LoadContext */
 /** @typedef {import('node:module').LoadFnOutput} LoadResult */
-/** @typedef {(url: string, context?: Partial<LoadContext>) => LoadResult} LoadFunction */
-/** @typedef {ReturnType<typeof parseEsm>} EsmParseResult */
+/** @typedef {Parameters<typeof import('./lib/get-esm-exports.mjs').lexEsm>[2]} EsmParseResult */
 /** @typedef {string | { specifier: string, format: 'module-typescript' | 'commonjs-typescript' }} SpecifierData */
 /** @typedef {{ name: string, origin: string }} StarBinding */
 /**
@@ -47,16 +45,28 @@ const TRACE_WARNINGS = process.execArgv.includes('--trace-warnings')
  * @property {Map<string, string> | undefined} origins
  */
 
-function hasIitm (url) {
+/**
+ * @param {string} url A possible IITM URL.
+ * @returns {string | undefined} The marker value when present.
+ */
+function getIitm (url) {
   // Fast path: avoid URL parsing on the hot path when there's clearly no iitm.
-  if (typeof url !== 'string' || url.indexOf('iitm') === -1) {
-    return false
-  }
+  if (url.indexOf('iitm') === -1) return
   try {
-    return new URL(url).searchParams.has('iitm')
+    const value = new URL(url).searchParams.get('iitm')
+    return value === null ? undefined : value
   } catch {
-    return false
+    // Invalid URLs do not carry IITM state.
   }
+  return undefined
+}
+
+/**
+ * @param {string} url A possible IITM URL.
+ * @returns {boolean} Whether the URL contains an IITM marker.
+ */
+function hasIitm (url) {
+  return getIitm(url) !== undefined
 }
 
 function isIitm (url, meta) {
@@ -204,6 +214,23 @@ function shouldExcludeExport (name, sourceUrl) {
 }
 
 /**
+ * @param {string} source The original module source.
+ * @returns {number} The first offset after its hashbang line.
+ */
+function getHashbangEnd (source) {
+  if (!source.startsWith('#!')) return 0
+
+  for (let index = 2; index < source.length; index++) {
+    const code = source.charCodeAt(index)
+    if (code === 0x0d /* \r */) {
+      return source.charCodeAt(index + 1) === 0x0a ? index + 2 : index + 1
+    }
+    if (code === 0x0a /* \n */ || code === 0x2028 || code === 0x2029) return index + 1
+  }
+  return source.length
+}
+
+/**
  * Processes a module's exports and builds its wrapper bindings.
  *
  * Written as a "sans-io" generator (see `lib/io.mjs`): instead of calling the
@@ -226,14 +253,15 @@ function shouldExcludeExport (name, sourceUrl) {
  * before descending into its subtree and removed once that subtree finishes, so
  * it tracks the active path rather than every URL ever visited.
  * @param {EsmParseResult} [params.parsed] A lexer result already produced for the root source.
+ * @param {{ source?: string, parsed?: EsmParseResult }} [params.capture] Receives the root source and lexer result.
  * @returns {Generator<Array, ProcessResult>}
  * A generator that yields I/O operations and ultimately returns the shimmed
  * bindings for all the exports from the module and any transitive export all
  * modules. `origins` (the defining module per `*`-sourced name) is `undefined`
  * for a module with no `export *`.
  */
-function * processModule ({ srcUrl, context, excludeDefault = false, depth = 0, seen, parsed }) {
-  const { exportNames, starReexports } = yield * getModuleExports(srcUrl, context, parsed)
+function * processModule ({ srcUrl, context, excludeDefault = false, depth = 0, seen, parsed, capture }) {
+  const { exportNames, starReexports } = yield * getModuleExports(srcUrl, context, parsed, capture)
 
   // Most modules have no export star. Keep that path array-backed so it pays
   // neither merge bookkeeping nor a Map lookup for each direct export.
@@ -361,21 +389,13 @@ function addIitmOriginal (url) {
   return urlObj.href
 }
 
-function isIitmOriginal (url) {
-  if (typeof url !== 'string' || url.indexOf('iitm') === -1) return false
-  try {
-    return new URL(url).searchParams.get('iitm') === 'original'
-  } catch {
-    return false
-  }
-}
-
 /**
  * @param {{ url: string }} meta
  * @param {typeof import('./lib/rewrite-esm-exports.mjs').rewriteEsmExports} [rewriteExports]
  * @param {typeof import('./lib/rewrite-esm-exports.mjs').canUseRequireCacheBridge} [canBridgeRequire]
+ * @param {typeof import('./lib/rewrite-esm-exports.mjs').canRewriteEsmExportsInPlace} [canRewriteSource]
  */
-export function createHook (meta, rewriteExports, canBridgeRequire) {
+export function createHook (meta, rewriteExports, canBridgeRequire, canRewriteSource) {
   /** @type {Map<string, SpecifierData>} */
   const specifiers = new Map()
   let cachedResolve
@@ -420,7 +440,12 @@ export function createHook (meta, rewriteExports, canBridgeRequire) {
       begin (name, proxy) {
         if (!name.startsWith('file:')) return
 
-        const filename = fileURLToPath(name)
+        let filename
+        try {
+          filename = fileURLToPath(name)
+        } catch {
+          return
+        }
         if (requireCache[filename] !== undefined) return
 
         const cachedModule = new Module(filename)
@@ -536,7 +561,7 @@ export function createHook (meta, rewriteExports, canBridgeRequire) {
   // once the parent loader has turned the specifier into a resolved URL. The
   // only difference between the asynchronous and synchronous hooks is whether
   // that resolution was awaited, so all the wrapping decisions live here.
-  function finishResolve (result, specifier, context, parentURL, preferInPlace = false) {
+  function finishResolve (result, specifier, context, parentURL, preferInPlace) {
     // Do not wrap the entrypoint module. Many CLIs check whether they are the
     // "main" module (e.g. require.main === module). Wrapping changes how they
     // are evaluated, and can make them exit without doing anything.
@@ -563,7 +588,9 @@ export function createHook (meta, rewriteExports, canBridgeRequire) {
     // asynchronous hook never sees the 'require' condition, so this is a no-op
     // there and only affects the synchronous path.
     if (context.conditions?.includes('require')) {
-      if (preferInPlace && !canonicalModules.has(result.url)) requiredModules.add(result.url)
+      if (preferInPlace && result.format === 'module' && !canonicalModules.has(result.url)) {
+        requiredModules.add(result.url)
+      }
       return result
     }
 
@@ -575,7 +602,9 @@ export function createHook (meta, rewriteExports, canBridgeRequire) {
 
     if (isIitm(parentURL, meta)) return result
     if (canonicalWrappers.has(parentURL)) return result
-    if (parentURL && hasIitm(parentURL) && !isIitmOriginal(parentURL)) return result
+    const parentIitm = getIitm(parentURL)
+    if (parentIitm !== undefined && parentIitm !== 'original') return result
+    const parentIsOriginal = parentIitm === 'original'
 
     // When a CJS module is loaded by an IITM shim, its require() calls for
     // builtins may be routed through the ESM resolver on Node 24+. Skip IITM
@@ -602,10 +631,10 @@ export function createHook (meta, rewriteExports, canBridgeRequire) {
     // If the file is referencing itself, keep the identity of the currently
     // evaluating module. A canonical wrapper evaluates the original source at
     // an internal URL, so its self-import must retain that URL as well.
-    const selfUrl = isIitmOriginal(parentURL) ? deleteIitm(parentURL) : parentURL
+    const selfUrl = parentIsOriginal ? deleteIitm(parentURL) : parentURL
     if (result.url === selfUrl) {
       return {
-        url: isIitmOriginal(parentURL) ? parentURL : result.url,
+        url: parentIsOriginal ? parentURL : result.url,
         shortCircuit: true,
         format: result.format
       }
@@ -614,7 +643,7 @@ export function createHook (meta, rewriteExports, canBridgeRequire) {
     // A canonical wrapper evaluates the original source under an internal URL.
     // Route a cycle back to that active original module instead of the wrapper,
     // whose exports are still in their temporal dead zone during linking.
-    if (isIitmOriginal(parentURL) && canonicalWrappers.has(result.url)) {
+    if (parentIsOriginal && canonicalWrappers.has(result.url)) {
       return {
         url: addIitmOriginal(result.url),
         shortCircuit: true,
@@ -666,7 +695,7 @@ export function createHook (meta, rewriteExports, canBridgeRequire) {
     }
     const result = await parentResolve(newSpecifier, context)
 
-    return finishResolve(result, specifier, context, parentURL)
+    return finishResolve(result, specifier, context, parentURL, false)
   }
 
   // Synchronous counterpart to `resolve`, for `module.registerHooks`. The
@@ -683,7 +712,8 @@ export function createHook (meta, rewriteExports, canBridgeRequire) {
       }
     }
 
-    if (isIitmOriginal(specifier)) {
+    const specifierIitm = getIitm(specifier)
+    if (specifierIitm === 'original') {
       return {
         url: specifier,
         shortCircuit: true,
@@ -692,7 +722,7 @@ export function createHook (meta, rewriteExports, canBridgeRequire) {
     }
 
     const { parentURL = '' } = context
-    const newSpecifier = deleteIitm(specifier)
+    const newSpecifier = specifierIitm === undefined ? specifier : deleteIitm(specifier)
     if (isWin && parentURL.indexOf('file:node') === 0) {
       context.parentURL = ''
     }
@@ -803,19 +833,20 @@ register(${JSON.stringify(realUrl)}, __binder, ${JSON.stringify(originalSpecifie
    * @param {string} realUrl The original module URL.
    * @param {string} source The original module source.
    * @param {string} originalSpecifier The original import specifier.
+   * @param {EsmParseResult} parsed The lexer result for this source.
    * @returns {string | undefined} Rewritten source.
    */
   function buildInPlaceSource (realUrl, source, originalSpecifier, parsed) {
+    const mutableExports = canRewriteSource?.(source, parsed)
+    if (mutableExports === undefined) return
     if (IN_PLACE_UNSAFE_IDENTIFIER_RE.test(source)) return
 
-    const rewritten = rewriteExports(source, parsed)
+    const rewritten = rewriteExports(source, parsed, mutableExports)
     if (rewritten === undefined) return
 
     let indexParameter = 'index'
     let valueParameter = 'value'
-    let hasLiveExports = false
     for (const exported of rewritten.exports) {
-      if (exported.mode === 'live') hasLiveExports = true
       if (exported.mode === 'dual') continue
       if (exported.local === indexParameter) indexParameter = '__iitmIndex'
       if (exported.local === valueParameter) valueParameter = '__iitmValue'
@@ -835,29 +866,27 @@ register(${JSON.stringify(realUrl)}, __binder, ${JSON.stringify(originalSpecifie
         declarations += declarations === '' ? `${binding} = ${local}` : `, ${binding} = ${local}`
         exportSpecifiers += exportSpecifiers === '' ? `${binding} as ${name}` : `, ${binding} as ${name}`
       }
-      if (hasLiveExports) readCases += `    case ${index}: return ${native ? local : binding}\n`
+      readCases += `    case ${index}: return ${native ? local : binding}\n`
       writeCases += `    case ${index}: ${native ? local : binding} = ${valueParameter}; break\n`
       keys += index === 0 ? JSON.stringify(name) : `, ${JSON.stringify(name)}`
       values += index === 0 ? local : `, ${local}`
     }
 
     const declarationSource = declarations === '' ? '' : `let ${declarations}\n`
-    const readSource = hasLiveExports
-      ? `function __iitmRead (${indexParameter}) {
+    const readSource = `function __iitmRead (${indexParameter}) {
   switch (${indexParameter}) {
 ${readCases}  }
 }
 `
-      : ''
     const reexports = exportSpecifiers === '' ? '' : `export { ${exportSpecifiers} }\n`
-    const read = hasLiveExports ? '__iitmRead' : 'undefined'
 
+    const bridgeRequire = canBridgeRequire?.(source, parsed) === true
     const instrumentedSource = `${rewritten.source}
 ${declarationSource}${readSource}function __iitmWrite (${indexParameter}, ${valueParameter}) {
   switch (${indexParameter}) {
 ${writeCases}  }
 }
-${reexports}${inPlaceBinder}(${JSON.stringify(realUrl)}, ${JSON.stringify(originalSpecifier)}, [${keys}], [${values}], ${read}, __iitmWrite)
+${reexports}${inPlaceBinder}(${JSON.stringify(realUrl)}, ${JSON.stringify(originalSpecifier)}, [${keys}], [${values}], __iitmRead, __iitmWrite, ${bridgeRequire})
 `
     return instrumentedSource
   }
@@ -881,51 +910,6 @@ ${reexports}${inPlaceBinder}(${JSON.stringify(realUrl)}, ${JSON.stringify(origin
    */
   function isRequireCached (url) {
     return getRequireCached(url) !== undefined
-  }
-
-  /**
-   * Attempts the in-place transform after the parent loader has supplied source.
-   *
-   * @param {string} realUrl The original module URL.
-   * @param {LoadResult} loadedResult The parent loader result.
-   * @param {string} originalSpecifier The original import specifier.
-   * @returns {{ source: string } | { parsed: EsmParseResult, originalSource: string } | undefined}
-   * The transform or reusable source and lexer result.
-   */
-  function buildInPlaceResult (realUrl, loadedResult, originalSpecifier) {
-    if (requiredModules.has(realUrl) || isRequireCached(realUrl) ||
-        loadedResult.format !== 'module' || loadedResult.source == null) return
-
-    const source = sourceToString(loadedResult.source)
-    const parsed = parseEsm(source)
-    const instrumented = buildInPlaceSource(realUrl, source, originalSpecifier, parsed)
-    if (instrumented === undefined) return { parsed, originalSource: source }
-
-    specifiers.delete(realUrl)
-    canonicalModules.add(realUrl)
-    return { source: instrumented }
-  }
-
-  /**
-   * Reuses the source already loaded for an unsuccessful in-place attempt.
-   *
-   * @param {string} realUrl The original module URL.
-   * @param {LoadResult | undefined} loadedResult The result to reuse once.
-   * @param {LoadFunction} load The parent loader.
-   * @returns {LoadFunction} A loader compatible with the synchronous driver.
-   */
-  function reuseLoadedResult (realUrl, loadedResult, load) {
-    if (loadedResult === undefined) return load
-
-    let pendingResult = loadedResult
-    return function loadOnce (requestedUrl, requestedContext) {
-      if (pendingResult !== undefined && requestedUrl === realUrl) {
-        const result = pendingResult
-        pendingResult = undefined
-        return result
-      }
-      return load(requestedUrl, requestedContext)
-    }
   }
 
   /**
@@ -1046,28 +1030,26 @@ ${reexports}${inPlaceBinder}(${JSON.stringify(realUrl)}, ${JSON.stringify(origin
           return { source: onWrapSuccess(realUrl, processContext, originalSpecifier, bindings, undefined, true) }
         }
 
-        let loadedResult
-        let originalSource
-        let parsed
-        if (rewriteExports !== undefined && canRewriteInPlace) {
-          loadedResult = nextLoad(realUrl, processContext)
-          const instrumented = buildInPlaceResult(realUrl, loadedResult, originalSpecifier)
-          if (instrumented?.source !== undefined) return instrumented
-          originalSource = instrumented?.originalSource
-          parsed = instrumented?.parsed
+        const capture = canonical ? {} : undefined
+        const { bindings } = driveSync(
+          processModule({ srcUrl: realUrl, context: processContext, capture }),
+          { resolve: cachedResolve, load: nextLoad }
+        )
+        if (capture?.source !== undefined && capture.parsed !== undefined &&
+            !requiredModules.has(realUrl) && !isRequireCached(realUrl)) {
+          const instrumented = buildInPlaceSource(realUrl, capture.source, originalSpecifier, capture.parsed)
+          if (instrumented !== undefined) {
+            specifiers.delete(realUrl)
+            canonicalModules.add(realUrl)
+            return { source: instrumented }
+          }
         }
 
-        const load = reuseLoadedResult(realUrl, loadedResult, nextLoad)
-
-        const { bindings } = driveSync(
-          processModule({ srcUrl: realUrl, context: processContext, parsed }),
-          { resolve: cachedResolve, load }
-        )
         const namespaceUrl = canonical ? addIitmOriginal(realUrl) : undefined
         let bridgeRequire = false
-        if (canonical && parsed !== undefined && originalSource !== undefined) {
-          if (parsed[0].some(record => record.type === 'import-meta')) originalImportMeta.add(realUrl)
-          bridgeRequire = canBridgeRequire?.(originalSource, parsed) === true
+        if (capture?.source !== undefined && capture.parsed !== undefined) {
+          if (capture.parsed[0].some(record => record.type === 'import-meta')) originalImportMeta.add(realUrl)
+          bridgeRequire = canBridgeRequire?.(capture.source, capture.parsed) === true
         }
         return {
           source: onWrapSuccess(
@@ -1131,7 +1113,8 @@ ${reexports}${inPlaceBinder}(${JSON.stringify(realUrl)}, ${JSON.stringify(origin
   // async `load` exactly — wrapping via `getSourceSync` and applying the same
   // CJS-in-iitm-chain source stripping — only without awaiting.
   function loadSync (url, context, nextLoad) {
-    if (isIitmOriginal(url)) {
+    const iitm = getIitm(url)
+    if (iitm === 'original') {
       const realUrl = deleteIitm(url)
       const result = nextLoad(realUrl, context)
       if (result.format !== 'module' || result.source == null) return result
@@ -1143,7 +1126,7 @@ ${reexports}${inPlaceBinder}(${JSON.stringify(realUrl)}, ${JSON.stringify(origin
       const restoreImportMeta = originalImportMeta.delete(realUrl)
         ? `import.meta.url = ${JSON.stringify(realUrl)};`
         : ''
-      const hashbangEnd = source.startsWith('#!') ? source.indexOf('\n') + 1 : 0
+      const hashbangEnd = getHashbangEnd(source)
       return {
         ...result,
         source: source.slice(0, hashbangEnd) + restoreImportMeta + source.slice(hashbangEnd) +
@@ -1151,7 +1134,7 @@ ${reexports}${inPlaceBinder}(${JSON.stringify(realUrl)}, ${JSON.stringify(origin
       }
     }
 
-    const tagged = hasIitm(url)
+    const tagged = iitm !== undefined
     const canonical = !tagged && context.format === 'module' && rewriteExports !== undefined &&
       canRewriteInPlace && specifiers.has(url)
     if (tagged || canonical) {

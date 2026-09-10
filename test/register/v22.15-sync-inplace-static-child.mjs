@@ -45,7 +45,7 @@ ok(hookedNames.has('child'), 'the statically-imported child is instrumented and 
 
 deepStrictEqual(
   Object.keys(namespace).sort(),
-  ['parentValue', 'readChild'],
+  ['readChild'],
   'only the user exports are enumerable; injected identifiers do not leak'
 )
 

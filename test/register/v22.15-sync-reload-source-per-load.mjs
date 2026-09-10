@@ -42,7 +42,7 @@ nodeModule.registerHooks({
   load (url, context, nextLoad) {
     if (url === RELOAD_URL) {
       loadCount += 1
-      return { format: 'module', source: `export const value = ${loadCount}\n`, shortCircuit: true }
+      return { format: 'module', source: `export let value\nvalue = ${loadCount}\n`, shortCircuit: true }
     }
     if (url === WRAPPER_URL) {
       wrapperLoadCount += 1

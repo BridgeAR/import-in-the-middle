@@ -166,21 +166,28 @@ loader and throws on a Node.js version where `supportsSyncHooks()` is `false`.
 
 ### In-place ESM rewriting
 
-The synchronous loader rewrites supported ESM source in place, which avoids a
-second wrapper module. This applies to direct ASCII identifier declarations for
-`const`, `let`, `var`, named functions, named classes and named defaults. The
-module can use `import.meta`, but static imports, dynamic imports and an `await`
-token select the wrapper. Re-exports, detached export lists, anonymous defaults,
-escaped identifiers and other unclassified forms also select the wrapper.
-The wrapper preserves source lines. If it must restore `import.meta.url`, code
-on the first source line can have a shifted stack-trace column.
+The synchronous loader rewrites small ESM sources in place when their exports
+use supported direct declarations. A direct `let` or `var` export also needs a
+recognized top-level assignment or update. This avoids a second wrapper module.
+Larger sources and unclassified mutation forms select the wrapper.
 
-Unreferenced immutable declarations keep their native export cells. A possible
-internal reference uses a separate export cell, which preserves wrapper behavior
-when a Hook replaces the export. Mutable `let` and `var` declarations use their
-native live cells so later module assignments stay visible to importers. A Hook
-write to a mutable export is therefore also visible to later reads inside the
-module. The rewriter does not inspect exported values or invoke their getters.
+An eligible module can also contain direct ASCII identifier declarations for
+`const`, named functions, named classes and named defaults. Detached export
+lists, imported dual-cell exports, re-exports, anonymous defaults and escaped
+identifiers select the wrapper. A static or dynamic import selects the wrapper
+when the module also needs an immutable export cell. Static imports and an
+`await` token disable the temporary `require.cache` bridge. The wrapper
+preserves source lines. If it must restore `import.meta.url`, code on the first
+source line can have a shifted stack-trace column.
+
+Immutable declarations use a separate export cell, which preserves their
+constant bindings and wrapper behavior when a Hook replaces an export. Mutable
+`let` and `var` declarations use their native live cells. The scanner recognizes
+top-level direct assignment, compound assignment and prefix or postfix increment
+and decrement. Every mutable export must have a recognized write. Nested,
+conditional, short-circuit, logical and destructuring writes do not count.
+If any mutable export lacks a recognized direct write, the module uses the
+wrapper. The rewriter does not inspect exported values or invoke their getters.
 
 ### Custom matching with `shouldInclude`
 

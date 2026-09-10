@@ -10,7 +10,5 @@
 // reaches it).
 import { childName } from './inplace-static-child.mjs'
 
-export const parentValue = 'parent'
-export function readChild () {
-  return childName()
-}
+export let readChild = () => 'uninitialized'
+readChild = () => childName()
