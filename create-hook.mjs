@@ -385,6 +385,9 @@ export function createHook (meta, rewriteExports, canBridgeRequire) {
   const cachedNamespaceKey = `${iitmRegisterPath}:cached-namespace:${meta.url}`
   const cacheBridgeKey = `${iitmRegisterPath}:cache-bridge`
   const requireCache = rewriteExports === undefined ? undefined : createRequire(meta.url).cache
+  const inPlaceBinder = rewriteExports === undefined
+    ? undefined
+    : `globalThis[Symbol.for('import-in-the-middle')][${JSON.stringify(iitmRegisterPath)}]`
   let includeModules, excludeModules
   let shouldInclude = defaultShouldInclude
   let disableCjsSourceStripping = false
@@ -808,33 +811,40 @@ register(${JSON.stringify(realUrl)}, __binder, ${JSON.stringify(originalSpecifie
     const rewritten = rewriteExports(source, parsed)
     if (rewritten === undefined) return
 
-    let declarations = ''
+    let indexParameter = 'index'
+    let valueParameter = 'value'
     let hasLiveExports = false
+    for (const exported of rewritten.exports) {
+      if (exported.mode === 'live') hasLiveExports = true
+      if (exported.mode === 'dual') continue
+      if (exported.local === indexParameter) indexParameter = '__iitmIndex'
+      if (exported.local === valueParameter) valueParameter = '__iitmValue'
+    }
+
+    let declarations = ''
     let readCases = ''
     let writeCases = ''
     let exportSpecifiers = ''
     let keys = ''
     let values = ''
     for (let index = 0; index < rewritten.exports.length; index++) {
-      const { name, local, live } = rewritten.exports[index]
+      const { name, local, mode } = rewritten.exports[index]
+      const native = mode !== 'dual'
       const binding = `__iitm${index}`
-      if (live) {
-        hasLiveExports = true
-      } else {
+      if (!native) {
         declarations += declarations === '' ? `${binding} = ${local}` : `, ${binding} = ${local}`
         exportSpecifiers += exportSpecifiers === '' ? `${binding} as ${name}` : `, ${binding} as ${name}`
       }
-      readCases += `    case ${index}: return ${live ? local : binding}\n`
-      writeCases += `    case ${index}: ${live ? local : binding} = value; break\n`
+      if (hasLiveExports) readCases += `    case ${index}: return ${native ? local : binding}\n`
+      writeCases += `    case ${index}: ${native ? local : binding} = ${valueParameter}; break\n`
       keys += index === 0 ? JSON.stringify(name) : `, ${JSON.stringify(name)}`
       values += index === 0 ? local : `, ${local}`
     }
 
-    const binder = `globalThis[Symbol.for('import-in-the-middle')][${JSON.stringify(iitmRegisterPath)}]`
     const declarationSource = declarations === '' ? '' : `let ${declarations}\n`
     const readSource = hasLiveExports
-      ? `function __iitmRead (index) {
-  switch (index) {
+      ? `function __iitmRead (${indexParameter}) {
+  switch (${indexParameter}) {
 ${readCases}  }
 }
 `
@@ -843,11 +853,11 @@ ${readCases}  }
     const read = hasLiveExports ? '__iitmRead' : 'undefined'
 
     const instrumentedSource = `${rewritten.source}
-${declarationSource}${readSource}function __iitmWrite (index, value) {
-  switch (index) {
+${declarationSource}${readSource}function __iitmWrite (${indexParameter}, ${valueParameter}) {
+  switch (${indexParameter}) {
 ${writeCases}  }
 }
-${reexports}${binder}(${JSON.stringify(realUrl)}, ${JSON.stringify(originalSpecifier)}, [${keys}], [${values}], ${read}, __iitmWrite)
+${reexports}${inPlaceBinder}(${JSON.stringify(realUrl)}, ${JSON.stringify(originalSpecifier)}, [${keys}], [${values}], ${read}, __iitmWrite)
 `
     return instrumentedSource
   }

@@ -52,6 +52,7 @@ function interceptTimeouts () {
   const { binder, slot } = makeBinder(source)
   strictEqual(slot.value, 42, 'construction seeds the export binding')
   strictEqual(binder.namespace.foo, 42, 'construction seeds the module object')
+  strictEqual(binder.read('foo'), 42, 'read falls back to the seeded namespace value')
 }
 
 // A hook writing through set overrides the value and wins over later updates.

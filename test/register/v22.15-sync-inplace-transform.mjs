@@ -7,8 +7,8 @@
 // generated wrapper module. The transform handles the shapes a single
 // es-module-lexer pass can classify: inline `const` / `let` / `var` / `function`
 // / `class`, an `export async function`, and a named default function. Immutable
-// declarations use dual cells, while mutable declarations retain their native
-// live cells so later assignments remain visible.
+// bindings with possible internal references use dual cells. Unreferenced and
+// mutable declarations reuse their native cells.
 import { match, ok, strictEqual } from 'node:assert/strict'
 import * as nodeModule from 'node:module'
 
@@ -84,7 +84,12 @@ let commentDefaultHooked = false
 const hook = (exports, name) => {
   if (/inplace-fastpath\.mjs/.test(name)) {
     hooked = true
+    const originalDefault = exports.default
     exports.foo += 15
+    exports.isolated += 5
+    exports.default = function main () {
+      return originalDefault() + ':hooked'
+    }
   } else if (name === '/virtual/iitm-string-source.mjs') {
     stringSourceHooked = true
     exports.value += 1
@@ -93,6 +98,8 @@ const hook = (exports, name) => {
   } else if (/inplace-live-bindings\.mjs/.test(name)) {
     liveBindingsHooked = true
     exports.state = 'hooked'
+    exports.value += 1
+    exports.index += 2
   } else if (name === '/virtual/iitm-typed-source.mjs') {
     typedSourceHooked = true
     exports.value += 1
@@ -113,11 +120,12 @@ ok(hooked, 'in-place transform runs the hook for inplace-fastpath.mjs')
 // wrap them.
 strictEqual(
   Object.keys(namespace).sort().join(','),
-  'Counter,default,foo,greet,load',
+  'Counter,default,foo,greet,isolated,load',
   'only the user exports are enumerable; injected identifiers do not leak'
 )
 
 strictEqual(namespace.foo, 57, 'hook-mutated named export is visible to importers')
+strictEqual(namespace.isolated, 15, 'an unreferenced const uses its native export cell')
 strictEqual(typeof namespace.greet, 'function', 'other named exports are preserved')
 strictEqual(typeof namespace.Counter, 'function', 'named class export is preserved')
 strictEqual(new namespace.Counter().increment(), 1, 'class export is usable')
@@ -130,7 +138,7 @@ strictEqual(typeof namespace.default, 'function', 'the named default function is
 // value. This matches the wrapper and is the correctness fix over a single-cell
 // rewrite.
 strictEqual(namespace.greet(), 'hi 42', 'internal reference is unaffected by the override (matches wrapper)')
-strictEqual(namespace.default(), 'hi 42', 'the default function reads the module-local foo')
+strictEqual(namespace.default(), 'hi 42:hooked', 'an unreferenced default function uses its native export cell')
 
 const stringSource = await import('iitm-string-source')
 ok(stringSourceHooked)
@@ -158,6 +166,12 @@ match(stack, /inplace-import-meta\.mjs:9:9\b/, 'wrapper fallback hides its inter
 const liveBindings = await import('../fixtures/inplace-live-bindings.mjs')
 ok(liveBindingsHooked, 'direct mutable exports use the in-place transform')
 strictEqual(liveBindings.state, 'hooked', 'Hook writes update the native let binding')
+strictEqual(liveBindings.value, 42, 'an export named value does not collide with the writer parameter')
+strictEqual(liveBindings.index, 42, 'an export named index does not collide with the reader parameter')
+strictEqual(liveBindings.selfReferenced(), liveBindings.selfReferenced, 'live modules retain dual immutable cells')
+liveBindings.updateCollisionExports()
+strictEqual(liveBindings.value, 43, 'later writes to value remain visible')
+strictEqual(liveBindings.index, 43, 'later writes to index remain visible')
 strictEqual(liveBindings.readState(), 'hooked', 'internal reads observe the Hook override')
 strictEqual(liveBindings.Late, undefined, 'an uninitialized var export starts undefined')
 liveBindings.updateState('updated')
@@ -181,6 +195,7 @@ try {
 match(stack, /inplace-throws\.mjs(?:\?iitm=true)?:4:/, 'stack trace keeps the original source line after the in-place rewrite')
 
 const columnThrowing = await import('../fixtures/inplace-stack-column.mjs')
+strictEqual(columnThrowing.url, new URL('../fixtures/inplace-stack-column.mjs', import.meta.url).href)
 try {
   columnThrowing.boom()
 } catch (error) {
@@ -188,8 +203,8 @@ try {
 }
 match(
   stack,
-  /inplace-stack-column\.mjs(?:\?iitm=true)?:1:33\b/,
-  'stack trace keeps the original source column after the in-place rewrite'
+  /inplace-stack-column\.mjs:1:69\b/,
+  'import.meta keeps the original source URL and column after the in-place rewrite'
 )
 
 console.log('✅ sync in-place transform: direct declarations preserve dual-cell parity')

@@ -3,6 +3,8 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021 Datadog, Inc.
 
 export let state = 'initial'
+export let value = 41
+export let index = 40
 // eslint-disable-next-line no-var -- issue #280 uses a late-initialized var export
 export var Late
 
@@ -10,8 +12,17 @@ export function readState () {
   return state
 }
 
+export function selfReferenced () {
+  return selfReferenced
+}
+
 export function updateState (value) {
   state = value
+}
+
+export function updateCollisionExports () {
+  value++
+  index++
 }
 
 export function initializeLate () {

@@ -3,7 +3,7 @@
 //
 // This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021 Datadog, Inc.
 
-export const url = import . meta.url
+const url = import . meta.url; export { url }
 
 export function boom () {
   throw new Error('boom')
