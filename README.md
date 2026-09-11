@@ -164,6 +164,31 @@ node --import=./instrument.mjs ./my-app.mjs
 `register()` accepts the same `include` / `exclude` options as the asynchronous
 loader and throws on a Node.js version where `supportsSyncHooks()` is `false`.
 
+### In-place ESM rewriting
+
+The synchronous loader rewrites small ESM sources in place when their exports
+use supported direct declarations. A direct `let` or `var` export also needs a
+recognized top-level assignment or update. This avoids a second wrapper module.
+Larger sources and unclassified mutation forms select the wrapper.
+
+An eligible module can also contain direct ASCII identifier declarations for
+`const`, named functions, named classes and named defaults. Detached export
+lists, imported dual-cell exports, re-exports, anonymous defaults and escaped
+identifiers select the wrapper. A static or dynamic import selects the wrapper
+when the module also needs an immutable export cell. Static imports and an
+`await` token disable the temporary `require.cache` bridge. The wrapper
+preserves source lines. If it must restore `import.meta.url`, code on the first
+source line can have a shifted stack-trace column.
+
+Immutable declarations use a separate export cell, which preserves their
+constant bindings and wrapper behavior when a Hook replaces an export. Mutable
+`let` and `var` declarations use their native live cells. The scanner recognizes
+top-level direct assignment, compound assignment and prefix or postfix increment
+and decrement. Every mutable export must have a recognized write. Nested,
+conditional, short-circuit, logical and destructuring writes do not count.
+If any mutable export lacks a recognized direct write, the module uses the
+wrapper. The rewriter does not inspect exported values or invoke their getters.
+
 ### Custom matching with `shouldInclude`
 
 Instead of `include` / `exclude` lists, you can pass a `shouldInclude(url, specifier)`
